@@ -1,0 +1,1 @@
+adb shell input touchscreen swipe 930 480 930 880 30

@@ -1,0 +1,1 @@
+adb shell am force-stop 'com.ss.android.ugc.aweme'

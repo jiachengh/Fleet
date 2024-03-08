@@ -1,0 +1,5139 @@
+From ebf6a6e46ee01696d2a0ec41b565c3fb8fa2d2cf Mon Sep 17 00:00:00 2001
+From: jiachengh <jiacheng.huang@outlook.com>
+Date: Wed, 14 Feb 2024 10:53:40 +0800
+Subject: [PATCH 6/7] Remove profiling
+
+Change-Id: I5392fa8f9535e3ad411034464a0062e134a647c3
+---
+ compiler/optimizing/code_generator.cc         |   4 +-
+ compiler/optimizing/code_generator_arm64.cc   | 121 +--
+ compiler/optimizing/code_generator_arm64.h    |   3 +-
+ runtime/Android.bp                            |   4 -
+ runtime/arch/arm/quick_entrypoints_arm.S      |   8 +
+ runtime/arch/arm64/quick_entrypoints_arm64.S  |  21 +
+ .../quick/quick_entrypoints_list.h            |   1 +
+ .../quick/quick_trampoline_entrypoints.cc     |   9 +-
+ runtime/gc/accounting/card_table.h            |  11 +
+ runtime/gc/accounting/mod_union_table.cc      |   1 +
+ runtime/gc/collector/concurrent_copying-inl.h |  44 +-
+ runtime/gc/collector/concurrent_copying.cc    | 776 +++++++++++++-----
+ runtime/gc/collector/concurrent_copying.h     |  63 +-
+ runtime/gc/collector/garbage_collector.cc     |  12 +-
+ runtime/gc/collector/garbage_collector.h      |  15 +
+ runtime/gc/gc_cause.cc                        |   3 +
+ runtime/gc/gc_cause.h                         |   3 +
+ runtime/gc/heap-inl.h                         |   7 +
+ runtime/gc/heap.cc                            | 266 +++++-
+ runtime/gc/heap.h                             | 135 ++-
+ runtime/gc/space/dlmalloc_space.cc            |  26 +
+ runtime/gc/space/dlmalloc_space.h             |   7 +
+ runtime/gc/space/large_object_space.cc        |  65 ++
+ runtime/gc/space/large_object_space.h         |  23 +-
+ runtime/gc/space/malloc_space.cc              |  22 +
+ runtime/gc/space/malloc_space.h               |   8 +
+ runtime/gc/space/region_space-inl.h           |  29 +-
+ runtime/gc/space/region_space.cc              | 567 +++++--------
+ runtime/gc/space/region_space.h               | 177 ++--
+ runtime/gc/space/space.cc                     |  19 +
+ runtime/gc/space/space.h                      |  12 +
+ runtime/jiacheng_barrier.cc                   |  45 +-
+ runtime/jiacheng_barrier.h                    |  11 +-
+ runtime/jiacheng_bloom_filter.h               |   5 +-
+ runtime/jiacheng_global.h                     |  41 +
+ runtime/jiacheng_hack.cc                      | 186 +----
+ runtime/jiacheng_hack.h                       |  21 +-
+ runtime/jiacheng_utils.cc                     | 121 +--
+ runtime/jiacheng_utils.h                      |  20 +-
+ runtime/mirror/array.h                        |   4 +
+ runtime/mirror/object-inl.h                   |  38 +
+ runtime/mirror/object.cc                      |  59 +-
+ runtime/mirror/object.h                       | 105 ++-
+ runtime/thread-inl.h                          |   7 +
+ runtime/thread.cc                             |   4 +
+ runtime/thread.h                              |  14 +
+ runtime/write_barrier-inl.h                   |  19 +
+ runtime/write_barrier.h                       |   4 +
+ 48 files changed, 1961 insertions(+), 1205 deletions(-)
+ create mode 100644 runtime/jiacheng_global.h
+
+diff --git a/compiler/optimizing/code_generator.cc b/compiler/optimizing/code_generator.cc
+index 576f18f5cb..3e34ecb082 100644
+--- a/compiler/optimizing/code_generator.cc
++++ b/compiler/optimizing/code_generator.cc
+@@ -497,11 +497,9 @@ void CodeGenerator::InitializeCodeGeneration(size_t number_of_spill_slots,
+ void CodeGenerator::CreateCommonInvokeLocationSummary(
+     HInvoke* invoke, InvokeDexCallingConventionVisitor* visitor) {
+   ArenaAllocator* allocator = invoke->GetBlock()->GetGraph()->GetAllocator();
+-  // jiacheng start
+   LocationSummary* locations = new (allocator) LocationSummary(invoke,
+                                                                LocationSummary::kCallOnMainOnly);
+-  // LocationSummary* locations = new (allocator) LocationSummary(invoke, LocationSummary::kCallOnMainAndSlowPath, true);
+-  // jiacheng end
++                                                               
+   for (size_t i = 0; i < invoke->GetNumberOfArguments(); i++) {
+     HInstruction* input = invoke->InputAt(i);
+     locations->SetInAt(i, visitor->GetNextLocation(input->GetType()));
+diff --git a/compiler/optimizing/code_generator_arm64.cc b/compiler/optimizing/code_generator_arm64.cc
+index 96ff9eeee4..a2710bc2ca 100644
+--- a/compiler/optimizing/code_generator_arm64.cc
++++ b/compiler/optimizing/code_generator_arm64.cc
+@@ -1870,20 +1870,13 @@ void LocationsBuilderARM64::HandleFieldGet(HInstruction* instruction,
+ 
+   bool object_field_get_with_read_barrier =
+       kEmitCompilerReadBarrier && (instruction->GetType() == DataType::Type::kReference);
+-  // 
+-  // LocationSummary* locations =
+-  //     new (GetGraph()->GetAllocator()) LocationSummary(instruction,
+-  //                                                      object_field_get_with_read_barrier
+-  //                                                          ? LocationSummary::kCallOnSlowPath
+-  //                                                          : LocationSummary::kNoCall);
+-  LocationSummary* locations = new (GetGraph()->GetAllocator()) LocationSummary(instruction, LocationSummary::kCallOnSlowPath);
+-  // jiacheng end
+-
++  LocationSummary* locations =
++      new (GetGraph()->GetAllocator()) LocationSummary(instruction,
++                                                       object_field_get_with_read_barrier
++                                                           ? LocationSummary::kCallOnSlowPath
++                                                           : LocationSummary::kNoCall);
+   if (object_field_get_with_read_barrier && kUseBakerReadBarrier) {
+-    // jiacheng start
+-    // locations->SetCustomSlowPathCallerSaves(RegisterSet::Empty());  // No caller-save registers.
+-    // jiacheng end
+-
++    locations->SetCustomSlowPathCallerSaves(RegisterSet::Empty());  // No caller-save registers.
+     // We need a temporary register for the read barrier load in
+     // CodeGeneratorARM64::GenerateFieldLoadWithBakerReadBarrier()
+     // only if the field is volatile or the offset is too big.
+@@ -1918,7 +1911,9 @@ void InstructionCodeGeneratorARM64::HandleFieldGet(HInstruction* instruction,
+   MemOperand field = HeapOperand(InputRegisterAt(instruction, 0), field_info.GetFieldOffset());
+ 
+   // jiacheng start
+-  codegen_->GenerateJiachengBarrier(instruction, base_loc);
++  if (load_type == DataType::Type::kReference) {
++    codegen_->GenerateJiachengBarrierInline(RegisterFrom(base_loc, DataType::Type::kReference));
++  }
+   // jiacheng end
+ 
+   if (kEmitCompilerReadBarrier && kUseBakerReadBarrier &&
+@@ -1962,13 +1957,8 @@ void InstructionCodeGeneratorARM64::HandleFieldGet(HInstruction* instruction,
+ }
+ 
+ void LocationsBuilderARM64::HandleFieldSet(HInstruction* instruction) {
+-  // jiacheng start
+-  // LocationSummary* locations =
+-  //     new (GetGraph()->GetAllocator()) LocationSummary(instruction, LocationSummary::kNoCall);
+   LocationSummary* locations =
+-      new (GetGraph()->GetAllocator()) LocationSummary(instruction, LocationSummary::kCallOnSlowPath);
+-  // jiacheng end
+-
++      new (GetGraph()->GetAllocator()) LocationSummary(instruction, LocationSummary::kNoCall);
+   locations->SetInAt(0, Location::RequiresRegister());
+   if (IsConstantZeroBitPattern(instruction->InputAt(1))) {
+     locations->SetInAt(1, Location::ConstantLocation(instruction->InputAt(1)->AsConstant()));
+@@ -1991,7 +1981,9 @@ void InstructionCodeGeneratorARM64::HandleFieldSet(HInstruction* instruction,
+   DataType::Type field_type = field_info.GetFieldType();
+ 
+   // jiacheng start
+-  codegen_->GenerateJiachengBarrier(instruction, LocationFrom(obj));
++  if (instruction->GetType() == DataType::Type::kReference) {
++    codegen_->GenerateJiachengBarrierInline(obj);
++  }
+   // jiacheng end
+   
+   {
+@@ -2359,19 +2351,13 @@ void InstructionCodeGeneratorARM64::VisitMultiplyAccumulate(HMultiplyAccumulate*
+ void LocationsBuilderARM64::VisitArrayGet(HArrayGet* instruction) {
+   bool object_array_get_with_read_barrier =
+       kEmitCompilerReadBarrier && (instruction->GetType() == DataType::Type::kReference);
+-  // jiacheng start
+-  // LocationSummary* locations =
+-  //     new (GetGraph()->GetAllocator()) LocationSummary(instruction,
+-  //                                                      object_array_get_with_read_barrier
+-  //                                                          ? LocationSummary::kCallOnSlowPath
+-  //                                                          : LocationSummary::kNoCall);
+-  LocationSummary* locations = new (GetGraph()->GetAllocator()) LocationSummary(instruction, LocationSummary::kCallOnSlowPath);
+-  // jiacheng end
+-
++  LocationSummary* locations =
++      new (GetGraph()->GetAllocator()) LocationSummary(instruction,
++                                                       object_array_get_with_read_barrier
++                                                           ? LocationSummary::kCallOnSlowPath
++                                                           : LocationSummary::kNoCall);
+   if (object_array_get_with_read_barrier && kUseBakerReadBarrier) {
+-    // jiacheng start
+-    // locations->SetCustomSlowPathCallerSaves(RegisterSet::Empty());  // No caller-save registers.
+-    // jiacheng end
++    locations->SetCustomSlowPathCallerSaves(RegisterSet::Empty());  // No caller-save registers.
+     if (instruction->GetIndex()->IsConstant()) {
+       // Array loads with constant index are treated as field loads.
+       // We need a temporary register for the read barrier load in
+@@ -2417,7 +2403,9 @@ void InstructionCodeGeneratorARM64::VisitArrayGet(HArrayGet* instruction) {
+   UseScratchRegisterScope temps(masm);
+ 
+   // jiacheng start
+-  codegen_->GenerateJiachengBarrier(instruction, LocationFrom(obj));
++  if (type == DataType::Type::kReference) {
++    codegen_->GenerateJiachengBarrierInline(obj.W());
++  }
+   // jiacheng end
+ 
+   // The non-Baker read barrier instrumentation of object ArrayGet instructions
+@@ -2541,11 +2529,7 @@ void InstructionCodeGeneratorARM64::VisitArrayGet(HArrayGet* instruction) {
+ }
+ 
+ void LocationsBuilderARM64::VisitArrayLength(HArrayLength* instruction) {
+-  // jiacheng start
+-  // LocationSummary* locations = new (GetGraph()->GetAllocator()) LocationSummary(instruction);
+-  LocationSummary* locations = new (GetGraph()->GetAllocator()) LocationSummary(instruction, LocationSummary::kCallOnSlowPath);
+-  // jiacheng end
+-
++  LocationSummary* locations = new (GetGraph()->GetAllocator()) LocationSummary(instruction);
+   locations->SetInAt(0, Location::RequiresRegister());
+   locations->SetOut(Location::RequiresRegister(), Location::kNoOutputOverlap);
+ }
+@@ -2555,8 +2539,10 @@ void InstructionCodeGeneratorARM64::VisitArrayLength(HArrayLength* instruction)
+   vixl::aarch64::Register out = OutputRegister(instruction);
+   
+   // jiacheng start
+-  Register obj = InputRegisterAt(instruction, 0);
+-  codegen_->GenerateJiachengBarrier(instruction, LocationFrom(obj));
++  if (instruction->GetType() == DataType::Type::kReference) {
++    Register obj = InputRegisterAt(instruction, 0);
++    codegen_->GenerateJiachengBarrierInline(obj);
++  }
+   // jiacheng end
+ 
+   {
+@@ -2574,16 +2560,12 @@ void InstructionCodeGeneratorARM64::VisitArrayLength(HArrayLength* instruction)
+ void LocationsBuilderARM64::VisitArraySet(HArraySet* instruction) {
+   DataType::Type value_type = instruction->GetComponentType();
+ 
+-
+-  // jiacheng start
+   bool may_need_runtime_call_for_type_check = instruction->NeedsTypeCheck();
+   LocationSummary* locations = new (GetGraph()->GetAllocator()) LocationSummary(
+       instruction,
+       may_need_runtime_call_for_type_check ?
+           LocationSummary::kCallOnSlowPath :
+           LocationSummary::kNoCall);
+-  // LocationSummary* locations = new (GetGraph()->GetAllocator()) LocationSummary(instruction, LocationSummary::kCallOnSlowPath);
+-  // jiacheng end
+   locations->SetInAt(0, Location::RequiresRegister());
+   locations->SetInAt(1, Location::RegisterOrConstant(instruction->InputAt(1)));
+   if (IsConstantZeroBitPattern(instruction->InputAt(2))) {
+@@ -2611,8 +2593,9 @@ void InstructionCodeGeneratorARM64::VisitArraySet(HArraySet* instruction) {
+   MacroAssembler* masm = GetVIXLAssembler();
+ 
+   // jiacheng start
+-  // codegen_->GenerateJiachengBarrier(instruction, LocationFrom(array));
+-  // codegen_->GenerateJiachengBarrierRaw(instruction, LocationFrom(array));
++  if (instruction->GetType() == DataType::Type::kReference) {
++    codegen_->GenerateJiachengBarrierInline(array);
++  }
+   // jiacheng end
+ 
+   if (!needs_write_barrier) {
+@@ -4068,10 +4051,6 @@ void InstructionCodeGeneratorARM64::VisitInvokeInterface(HInvokeInterface* invok
+   // Ensure that between load and MaybeRecordImplicitNullCheck there are no pools emitted.
+   if (receiver.IsStackSlot()) {
+     __ Ldr(temp.W(), StackOperandFrom(receiver));
+-    // jiacheng start
+-    // codegen_->GenerateJiachengBarrier(invoke, LocationFrom(temp));
+-    // codegen_->GenerateJiachengBarrierRaw(invoke, LocationFrom(temp));
+-    // jiacheng end
+     {
+       EmissionCheckScope guard(GetVIXLAssembler(), kMaxMacroInstructionSizeInBytes);
+       // /* HeapReference<Class> */ temp = temp->klass_
+@@ -4079,10 +4058,6 @@ void InstructionCodeGeneratorARM64::VisitInvokeInterface(HInvokeInterface* invok
+       codegen_->MaybeRecordImplicitNullCheck(invoke);
+     }
+   } else {
+-    // jiacheng start
+-    // codegen_->GenerateJiachengBarrier(invoke, receiver);
+-    // codegen_->GenerateJiachengBarrierRaw(invoke, receiver);
+-    // jiacheng end
+     EmissionCheckScope guard(GetVIXLAssembler(), kMaxMacroInstructionSizeInBytes);
+     // /* HeapReference<Class> */ temp = receiver->klass_
+     __ Ldr(temp.W(), HeapOperandFrom(receiver, class_offset));
+@@ -4102,11 +4077,6 @@ void InstructionCodeGeneratorARM64::VisitInvokeInterface(HInvokeInterface* invok
+   uint32_t method_offset = static_cast<uint32_t>(ImTable::OffsetOfElement(
+       invoke->GetImtIndex(), kArm64PointerSize));
+ 
+-  // jiacheng start
+-  // codegen_->GenerateJiachengBarrier(invoke, LocationFrom(temp));
+-  // codegen_->GenerateJiachengBarrierRaw(invoke, LocationFrom(temp));
+-  // jiacheng end
+-
+   // temp = temp->GetImtEntryAt(method_offset);
+   __ Ldr(temp, MemOperand(temp, method_offset));
+   // lr = temp->GetEntryPoint();
+@@ -4267,11 +4237,6 @@ void CodeGeneratorARM64::GenerateVirtualCall(
+   Offset entry_point = ArtMethod::EntryPointFromQuickCompiledCodeOffset(kArm64PointerSize);
+ 
+   DCHECK(receiver.IsRegister());
+-  
+-  // jiacheng start
+-  // GenerateJiachengBarrier(LocationFrom(receiver));
+-  // codegen_->GenerateJiachengBarrierRaw(invoke, LocationFrom(receiver));
+-  // jiacheng end
+ 
+   {
+     // Ensure that between load and MaybeRecordImplicitNullCheck there are no pools emitted.
+@@ -4288,11 +4253,6 @@ void CodeGeneratorARM64::GenerateVirtualCall(
+   // concurrent copying collector may not in the future).
+   GetAssembler()->MaybeUnpoisonHeapReference(temp.W());
+ 
+-  // jiacheng start
+-  // GenerateJiachengBarrier(LocationFrom(temp));
+-  // codegen_->GenerateJiachengBarrierRaw(invoke, LocationFrom(temp));
+-  // jiacheng end
+-
+   // temp = temp->GetMethodAt(method_offset);
+   __ Ldr(temp, MemOperand(temp, method_offset));
+   // lr = temp->GetEntryPoint();
+@@ -5817,8 +5777,7 @@ void InstructionCodeGeneratorARM64::GenerateReferenceLoadOneRegister(
+   Register out_reg = RegisterFrom(out, type);
+ 
+   // jiacheng start
+-  // codegen_->GenerateJiachengBarrier(LocationFrom(out_reg));
+-  // codegen_->GenerateJiachengBarrierRaw(instruction, LocationFrom(out_reg));
++  codegen_->GenerateJiachengBarrierInline(out_reg);
+   // jiacheng end
+   
+   if (read_barrier_option == kWithReadBarrier) {
+@@ -5864,8 +5823,7 @@ void InstructionCodeGeneratorARM64::GenerateReferenceLoadTwoRegisters(
+   Register obj_reg = RegisterFrom(obj, type);
+ 
+   // jiacheng start
+-  // codegen_->GenerateJiachengBarrier(LocationFrom(obj_reg));
+-  // codegen_->GenerateJiachengBarrierRaw(instruction, LocationFrom(obj_reg));
++  codegen_->GenerateJiachengBarrierInline(obj_reg);
+   // jiacheng end
+ 
+   if (read_barrier_option == kWithReadBarrier) {
+@@ -5905,8 +5863,7 @@ void CodeGeneratorARM64::GenerateGcRootFieldLoad(
+   Register root_reg = RegisterFrom(root, DataType::Type::kReference);
+ 
+   // jiacheng start
+-  // GenerateJiachengBarrier(LocationFrom(obj));
+-  // codegen_->GenerateJiachengBarrierRaw(instruction, LocationFrom(obj));
++  // GenerateJiachengBarrierInline(obj.X());
+   // jiacheng end
+ 
+   if (read_barrier_option == kWithReadBarrier) {
+@@ -6246,6 +6203,18 @@ void CodeGeneratorARM64::GenerateReadBarrierForRootSlow(HInstruction* instructio
+ }
+ 
+ // jiacheng start
++void CodeGeneratorARM64::GenerateJiachengBarrierInline(Register obj) {
++  vixl::aarch64::Label done;
++
++  __ Cbz(obj, &done);
++
++  // UseScratchRegisterScope temps(GetVIXLAssembler());
++  // Register temp = temps.AcquireX(); // There is only one avaliable register
++
++  __ Bind(&done);
++}
++
++
+ void CodeGeneratorARM64::GenerateJiachengBarrier(HInstruction* instruction, Location obj) {
+   SlowPathCodeARM64* slow_path = new (GetScopedAllocator()) JiachengBarrierSlowPathARM64(instruction, obj);
+   AddSlowPath(slow_path);
+diff --git a/compiler/optimizing/code_generator_arm64.h b/compiler/optimizing/code_generator_arm64.h
+index a996557bc1..5d47655cb4 100644
+--- a/compiler/optimizing/code_generator_arm64.h
++++ b/compiler/optimizing/code_generator_arm64.h
+@@ -766,6 +766,8 @@ class CodeGeneratorARM64 : public CodeGenerator {
+   void GenerateReadBarrierForRootSlow(HInstruction* instruction, Location out, Location root);
+ 
+   // jiacheng start
++  void GenerateJiachengBarrierInline(vixl::aarch64::Register obj);
++
+   void GenerateJiachengBarrier(HInstruction* instruction, Location obj);
+ 
+   void GenerateJiachengBarrierRaw(HInstruction* instruction, Location obj);
+@@ -782,7 +784,6 @@ class CodeGeneratorARM64 : public CodeGenerator {
+ 
+   void GenerateSaveRegisters(const std::vector<vixl::aarch64::CPURegister> & registersToSave);
+   void GenerateRestoreRegisters(const std::vector<vixl::aarch64::CPURegister> & savedRegisters);
+-
+   // jiacheng end
+ 
+   void GenerateNop() override;
+diff --git a/runtime/Android.bp b/runtime/Android.bp
+index d47d9ad609..054b91c37d 100644
+--- a/runtime/Android.bp
++++ b/runtime/Android.bp
+@@ -107,11 +107,7 @@ libart_cc_defaults {
+         "java_frame_root_info.cc",
+ // jiacheng start ------------------------------------
+         "jiacheng_hack.cc",
+-        "jiacheng_activity_manager.cc",
+         "jiacheng_utils.cc",
+-        "jiacheng_profiler.cc",
+-        "jiacheng_swapper.cc",
+-        "jiacheng_debug.cc",
+         "jiacheng_barrier.cc",
+ // jiacheng end --------------------------------------
+         "jdwp/jdwp_event.cc",
+diff --git a/runtime/arch/arm/quick_entrypoints_arm.S b/runtime/arch/arm/quick_entrypoints_arm.S
+index b57e119fbe..9327134711 100644
+--- a/runtime/arch/arm/quick_entrypoints_arm.S
++++ b/runtime/arch/arm/quick_entrypoints_arm.S
+@@ -922,6 +922,10 @@ ENTRY art_quick_aput_obj
+     ldr r3, [rSELF, #THREAD_CARD_TABLE_OFFSET]
+     lsr r0, r0, #CARD_TABLE_CARD_SHIFT
+     strb r3, [r3, r0]
++    // jiacheng start
++    ldr r3, [rSELF, #THREAD_CARD_TABLE2_OFFSET] // x3 = card table
++    strb r3, [r3, r0] // dirty card (the first byte of card table is DIRTY)
++    // jiacheng end
+     blx lr
+ .Ldo_aput_null:
+     add r3, r0, #MIRROR_OBJECT_ARRAY_DATA_OFFSET
+@@ -950,6 +954,10 @@ ENTRY art_quick_aput_obj
+     ldr r3, [rSELF, #THREAD_CARD_TABLE_OFFSET]
+     lsr r0, r0, #CARD_TABLE_CARD_SHIFT
+     strb r3, [r3, r0]
++    // jiacheng start
++    ldr r3, [rSELF, #THREAD_CARD_TABLE2_OFFSET] // x3 = card table
++    strb r3, [r3, r0] // dirty card (the first byte of card table is DIRTY)
++    // jiacheng end
+     blx lr
+ .Lthrow_array_store_exception:
+     pop {r0-r2, lr}
+diff --git a/runtime/arch/arm64/quick_entrypoints_arm64.S b/runtime/arch/arm64/quick_entrypoints_arm64.S
+index cb74ee81f2..a335bcfd61 100644
+--- a/runtime/arch/arm64/quick_entrypoints_arm64.S
++++ b/runtime/arch/arm64/quick_entrypoints_arm64.S
+@@ -1381,6 +1381,10 @@ ENTRY art_quick_aput_obj
+     ldr x3, [xSELF, #THREAD_CARD_TABLE_OFFSET]
+     lsr x0, x0, #CARD_TABLE_CARD_SHIFT
+     strb w3, [x3, x0]
++    // jiacheng start
++    ldr x3, [xSELF, #THREAD_CARD_TABLE2_OFFSET] // x3 = card table
++    strb w3, [x3, x0] // dirty card (the first byte of card table is DIRTY)
++    // jiacheng end
+     ret
+ .Ldo_aput_null:
+     add x3, x0, #MIRROR_OBJECT_ARRAY_DATA_OFFSET
+@@ -1412,6 +1416,10 @@ ENTRY art_quick_aput_obj
+     ldr x3, [xSELF, #THREAD_CARD_TABLE_OFFSET]
+     lsr x0, x0, #CARD_TABLE_CARD_SHIFT
+     strb w3, [x3, x0]
++    // jiacheng start
++    ldr x3, [xSELF, #THREAD_CARD_TABLE2_OFFSET] // x3 = card table
++    strb w3, [x3, x0] // dirty card (the first byte of card table is DIRTY)
++    // jiacheng end
+     ret
+     .cfi_restore_state            // Reset unwind info so following code unwinds.
+     .cfi_def_cfa_offset 32        // workaround for clang bug: 31975598
+@@ -1784,6 +1792,12 @@ ART_QUICK_ALLOC_OBJECT_ROSALLOC art_quick_alloc_object_initialized_rosalloc, art
+     // TODO: Remove this dmb for class initialization checks (b/36692143) by introducing
+     // a new observably-initialized class state.
+ .endif
++    // jiacheng start
++    SETUP_SAVE_EVERYTHING_FRAME
++    bl allocationBarrierTrampoline
++    RESTORE_SAVE_EVERYTHING_FRAME
++    REFRESH_MARKING_REGISTER
++    // jiacheng end
+     ret
+ .endm
+ 
+@@ -1852,6 +1866,13 @@ GENERATE_ALLOC_OBJECT_RESOLVED_TLAB art_quick_alloc_object_initialized_tlab, art
+ 
+ // For publication of the new array, we don't need a 'dmb ishst' here.
+ // The compiler generates 'dmb ishst' for all new-array insts.
++
++    // jiacheng start
++    SETUP_SAVE_EVERYTHING_FRAME
++    bl allocationBarrierTrampoline
++    RESTORE_SAVE_EVERYTHING_FRAME
++    REFRESH_MARKING_REGISTER
++    // jiacheng end
+     ret
+ .endm
+ 
+diff --git a/runtime/entrypoints/quick/quick_entrypoints_list.h b/runtime/entrypoints/quick/quick_entrypoints_list.h
+index 57b555955c..d785b79c53 100644
+--- a/runtime/entrypoints/quick/quick_entrypoints_list.h
++++ b/runtime/entrypoints/quick/quick_entrypoints_list.h
+@@ -204,6 +204,7 @@
+   V(ReadBarrierForRootSlow, mirror::Object*, GcRoot<mirror::Object>*) \
+   /* jiacheng start*/ \
+   V(JiachengBarrier, void, uint64_t) \
++  V(AllocationNew, void, uint64_t) \
+   /* jiacheng end */ \
+ \
+ 
+diff --git a/runtime/entrypoints/quick/quick_trampoline_entrypoints.cc b/runtime/entrypoints/quick/quick_trampoline_entrypoints.cc
+index a2420afb69..a9d8365327 100644
+--- a/runtime/entrypoints/quick/quick_trampoline_entrypoints.cc
++++ b/runtime/entrypoints/quick/quick_trampoline_entrypoints.cc
+@@ -2923,4 +2923,11 @@ extern "C" uint64_t artInvokeCustom(uint32_t call_site_idx, Thread* self, ArtMet
+   return result.GetJ();
+ }
+ 
+-}  // namespace art
++// jiacheng start
++extern "C" void allocationBarrierTrampoline(uint64_t obj) {
++  jiacheng::AllocationNewBarrier(obj);
++}
++// jiacheng end
++
++
++}  // namespace art
+\ No newline at end of file
+diff --git a/runtime/gc/accounting/card_table.h b/runtime/gc/accounting/card_table.h
+index 5f4675d1cf..110bdd77d7 100644
+--- a/runtime/gc/accounting/card_table.h
++++ b/runtime/gc/accounting/card_table.h
+@@ -173,6 +173,17 @@ class AgeCardVisitor {
+   }
+ };
+ 
++// jiacheng 
++class AgeCardWithoutClearVisitor {
++ public:
++  uint8_t operator()(uint8_t card) const {
++    return (card == accounting::CardTable::kCardDirty || 
++            card == accounting::CardTable::kCardAged) ? 
++            card == accounting::CardTable::kCardAged : 0;
++  }
++};
++// jiacheng 
++
+ }  // namespace gc
+ }  // namespace art
+ 
+diff --git a/runtime/gc/accounting/mod_union_table.cc b/runtime/gc/accounting/mod_union_table.cc
+index b4026fc3f3..8c0d2c9f5e 100644
+--- a/runtime/gc/accounting/mod_union_table.cc
++++ b/runtime/gc/accounting/mod_union_table.cc
+@@ -478,6 +478,7 @@ void ModUnionTableReferenceCache::UpdateAndMarkReferences(MarkObjectVisitor* vis
+   }
+ }
+ 
++
+ ModUnionTableCardCache::ModUnionTableCardCache(const std::string& name,
+                                                Heap* heap,
+                                                space::ContinuousSpace* space)
+diff --git a/runtime/gc/collector/concurrent_copying-inl.h b/runtime/gc/collector/concurrent_copying-inl.h
+index 691ffb1d88..39d723dde4 100644
+--- a/runtime/gc/collector/concurrent_copying-inl.h
++++ b/runtime/gc/collector/concurrent_copying-inl.h
+@@ -29,8 +29,7 @@
+ #include "mirror/object-readbarrier-inl.h"
+ 
+ // jiacheng start  
+-#include "jiacheng_hack.h"
+-#include "jiacheng_profiler.h"
++#include "jiacheng_utils.h"
+ // jiacheng end
+ 
+ namespace art {
+@@ -157,18 +156,10 @@ inline mirror::Object* ConcurrentCopying::Mark(Thread* const self,
+     return from_ref;
+   }
+   DCHECK(region_space_ != nullptr) << "Read barrier slow path taken when CC isn't running?";
+-  // jiahceng start -------------------------------------_
+-    // if (jiacheng::ColdSpace::Current()->HasAddress(from_ref)) {
+-    //   // Mark在ColdSpace中的对象，把该对象标灰
+-    //   // bool success = from_ref->AtomicSetReadBarrierState(ReadBarrier::WhiteState(), ReadBarrier::GrayState());
+-    //   bool success = from_ref->AtomicSetReadBarrierState(ReadBarrier::NonGrayState(), ReadBarrier::GrayState());
+-    //   if (success) {
+-    //     PushOntoMarkStack(self, from_ref);
+-    //   }
+-    //   return from_ref;
+-    // }  else if (region_space_->HasAddress(from_ref)) {
++  // jiacheng start
++  mark_num_.fetch_add(1, std::memory_order_relaxed);
++  // jiacheng end
+   if (region_space_->HasAddress(from_ref)) {
+-  // jiacheng end -------------------------------------
+     space::RegionSpace::RegionType rtype = region_space_->GetRegionTypeUnsafe(from_ref);
+     switch (rtype) {
+       case space::RegionSpace::RegionType::kRegionTypeToSpace:
+@@ -180,12 +171,6 @@ inline mirror::Object* ConcurrentCopying::Mark(Thread* const self,
+           // It isn't marked yet. Mark it by copying it to the to-space.
+           to_ref = Copy(self, from_ref, holder, offset);
+         }
+-        // jiacheng start
+-        // jiacheng::Profiler* profiler = jiacheng::Profiler::Current();
+-        // if (to_ref != from_ref && profiler->TestInAccessWS(from_ref)) {
+-        //   profiler->RecordAccessWS(to_ref);
+-        // }
+-        // jiacheng end
+         // The copy should either be in a to-space region, or in the
+         // non-moving space, if it could not fit in a to-space region.
+         DCHECK(region_space_->IsInToSpace(to_ref) || heap_->non_moving_space_->HasAddress(to_ref))
+@@ -201,24 +186,6 @@ inline mirror::Object* ConcurrentCopying::Mark(Thread* const self,
+         }
+         return MarkUnevacFromSpaceRegion(self, from_ref, region_space_bitmap_);
+       }
+-      // jiacheng start
+-      case space::RegionSpace::RegionType::kRegionTypeColdToSpace: {
+-        // Already marked
+-        return from_ref;
+-      }
+-      case space::RegionSpace::RegionType::kRegionTypeColdSpace: {
+-        return MarkColdSpaceRegion(self, from_ref, region_space_bitmap_);
+-      }
+-      case space::RegionSpace::RegionType::kRegionTypeHotSpace: {
+-        if (kNoUnEvac && use_generational_cc_ && !region_space_->IsLargeObject(from_ref)) {
+-          if (!kFromGCThread) {
+-            DCHECK(IsMarkedInUnevacFromSpace(from_ref)) << "Returning unmarked object to mutator";
+-          }
+-          return from_ref;
+-        }
+-        return MarkUnevacFromSpaceRegion(self, from_ref, region_space_bitmap_);
+-      }
+-      // jiacheng end
+       default:
+         // The reference is in an unused region. Remove memory protection from
+         // the region space and log debugging information.
+@@ -238,6 +205,9 @@ inline mirror::Object* ConcurrentCopying::Mark(Thread* const self,
+ }
+ 
+ inline mirror::Object* ConcurrentCopying::MarkFromReadBarrier(mirror::Object* from_ref) {
++  // jiacheng start
++  read_barrier_num_.fetch_add(1, std::memory_order_relaxed);
++  // jiacheng end
+   mirror::Object* ret;
+   Thread* const self = Thread::Current();
+   // We can get here before marking starts since we gray immune objects before the marking phase.
+diff --git a/runtime/gc/collector/concurrent_copying.cc b/runtime/gc/collector/concurrent_copying.cc
+index 11ced05e50..08ad6906d0 100644
+--- a/runtime/gc/collector/concurrent_copying.cc
++++ b/runtime/gc/collector/concurrent_copying.cc
+@@ -48,7 +48,6 @@
+ #include "well_known_classes.h"
+ 
+ // jiacheng start
+-#include "jiacheng_profiler.h"
+ #include "jiacheng_utils.h"
+ #include <iostream>
+ // jiacheng end
+@@ -74,39 +73,6 @@ static constexpr size_t kSweepArrayChunkFreeSize = 1024;
+ static constexpr bool kVerifyNoMissingCardMarks = kIsDebugBuild;
+ 
+ 
+-// jiacheng start
+-class ConcurrentCopying::RegionRememberedObjectsVisitor {
+- public:
+-  explicit RegionRememberedObjectsVisitor(ConcurrentCopying* cc) : collector_(cc) {}
+-
+-  ALWAYS_INLINE void operator()(mirror::Object* ref) const REQUIRES_SHARED(Locks::mutator_lock_) {
+-    if (ref == nullptr) {
+-      return;
+-    }
+-    if (!collector_->TestAndSetMarkBitForRef(ref)) {
+-      collector_->PushOntoLocalMarkStack(ref);
+-    }
+-  }
+-
+- private:
+-  ConcurrentCopying* const collector_;
+-};
+-
+-class ConcurrentCopying::RegionRememberedObjectsAsRootVisitor {
+- public:
+-  explicit RegionRememberedObjectsAsRootVisitor(ConcurrentCopying* cc) : collector_(cc) {}
+-
+-  ALWAYS_INLINE mirror::Object* operator()(mirror::Object* ref) const REQUIRES_SHARED(Locks::mutator_lock_) {
+-    // LOG(INFO) << "jiacheng concurrent_copying.cc 100 ref= " << size_t(ref);
+-    return collector_->MarkObject(ref);
+-  }
+-
+- private:
+-  ConcurrentCopying* const collector_;
+-};
+-// jiacheng end
+-
+-
+ ConcurrentCopying::ConcurrentCopying(Heap* heap,
+                                      bool young_gen,
+                                      bool use_generational_cc,
+@@ -122,6 +88,9 @@ ConcurrentCopying::ConcurrentCopying(Heap* heap,
+                                                      kDefaultGcMarkStackSize)),
+       use_generational_cc_(use_generational_cc),
+       young_gen_(young_gen),
++      // jiacheng start
++      background_gen_(false),
++      // jiacheng end
+       rb_mark_bit_stack_(accounting::ObjectStack::Create("rb copying gc mark stack",
+                                                          kReadBarrierMarkStackSize,
+                                                          kReadBarrierMarkStackSize)),
+@@ -231,13 +200,72 @@ void ConcurrentCopying::RunPhases() {
+   is_active_ = true;
+   Thread* self = Thread::Current();
+   thread_running_gc_ = self;
++
++  // jiacheng start
++  bool is_white_app = jiacheng::IsWhiteApp();
++  Iteration* current_iteration = GetCurrentIteration();
++  heap_->SetDuringGcFlag(true);
++  SetDepth(0);
++  gc_cause_ = GetCurrentIteration()->GetGcCause();
++
++  background_gen_ = jiacheng::ENABLE_BGC &&
++                    is_white_app && 
++                    !young_gen_ &&
++                    gc_cause_ != kGcCauseRelocateHotness &&
++                    heap_->GetDoneRelocateHotness();
++
++  copy_launch_object_num_.store(0, std::memory_order_relaxed);
++  copy_cold_object_num_.store(0, std::memory_order_relaxed);
++  mark_num_.store(0, std::memory_order_relaxed);
++  mark_from_read_barrier_num_.store(0, std::memory_order_relaxed);
++  scan_num_.store(0, std::memory_order_relaxed);
++  copy_num_.store(0, std::memory_order_relaxed);
++  copy_from_barrier_num_.store(0, std::memory_order_relaxed);
++  push_on_mark_stack_num_.store(0, std::memory_order_relaxed);
++  read_barrier_num_.store(0, std::memory_order_relaxed);
++
++  if (is_white_app) {
++    LOG(INFO) << "jiacheng ConcurrentCopying::Runphases() Start"
++              << " NanoTime()= " << NanoTime()
++              << " GetGcType()= " << GetGcType()
++              << " current_iteration->GetGcCause()= " << current_iteration->GetGcCause()
++              << " current_iteration->GetClearSoftReferences()= " << current_iteration->GetClearSoftReferences()
++              << " force_evacuate_all_= " << force_evacuate_all_
++              << " background_gen_= " << background_gen_
++              << " young_gen_= " << young_gen_
++              << " current_iteration->GetFreedObjects()= " << current_iteration->GetFreedObjects()
++              << " current_iteration->GetFreedLargeObjects()= " << current_iteration->GetFreedLargeObjects() 
++              << " current_iteration->GetFreedBytes()(MB)= " << current_iteration->GetFreedBytes()/MB
++              << " region_space->GetObjectsAllocated()= " << heap_->GetRegionSpace()->GetObjectsAllocated()
++              << " region_space->GetBytesAllocated()= " << heap_->GetRegionSpace()->GetBytesAllocated()/MB
++              << " mark_num_= " << mark_num_.load(std::memory_order_relaxed)
++              << " mark_from_read_barrier_num_= " << mark_from_read_barrier_num_.load(std::memory_order_relaxed)
++              << " scan_num_= " << scan_num_.load(std::memory_order_relaxed)
++              << " copy_num_= " << copy_num_.load(std::memory_order_relaxed)
++              << " copy_from_barrier_num_= " << copy_from_barrier_num_.load(std::memory_order_relaxed)
++              << " push_on_mark_stack_num_= " << push_on_mark_stack_num_.load(std::memory_order_relaxed)
++              << " read_barrier_num_= " << read_barrier_num_.load(std::memory_order_relaxed)
++              << " copy_launch_object_num_= " << copy_launch_object_num_.load(std::memory_order_relaxed)
++              << " copy_cold_object_num_= " << copy_cold_object_num_.load(std::memory_order_relaxed)
++              << " depth_= " << GetDepth()
++              ;
++    region_space_->Debug();
++    heap_->GetNonMovingSpace()->Debug();
++    heap_->GetLargeObjectsSpace()->Debug();
++  }
++  // jiacheng end
++
+   Locks::mutator_lock_->AssertNotHeld(self);
+   {
+     ReaderMutexLock mu(self, *Locks::mutator_lock_);
+     InitializePhase();
+     // In case of forced evacuation, all regions are evacuated and hence no
+     // need to compute live_bytes.
+-    if (use_generational_cc_ && !young_gen_ && !force_evacuate_all_) {
++
++    // jiacheng start
++    // if (use_generational_cc_ && !young_gen_ && !force_evacuate_all_) {
++    if (use_generational_cc_ && !young_gen_ && !background_gen_ && !force_evacuate_all_) {
++    // jiacheng end
+       MarkingPhase();
+     }
+   }
+@@ -250,18 +278,6 @@ void ConcurrentCopying::RunPhases() {
+     ReaderMutexLock mu(self, *Locks::mutator_lock_);
+     GrayAllDirtyImmuneObjects();
+   }
+-  // jiacheng start
+-  {
+-    LOG(INFO) << "jiacheng concurrent_copying.cc 220";
+-    ReaderMutexLock mu(self, *Locks::mutator_lock_);
+-    RegionRememberedObjectsAsRootVisitor root_visitor(this);
+-    region_space_->VisitRememberedObjectsAsRoot(root_visitor);
+-    // TODO remove
+-    RegionRememberedObjectsVisitor visitor(this);
+-    region_space_->VisitRememberedObjects(visitor);
+-  }
+-  // jiacheng end
+-
+   FlipThreadRoots();
+   {
+     ReaderMutexLock mu(self, *Locks::mutator_lock_);
+@@ -284,11 +300,49 @@ void ConcurrentCopying::RunPhases() {
+   {
+     ReaderMutexLock mu(self, *Locks::mutator_lock_);
+     ReclaimPhase();
++    // jiacheng start
++    if (gc_cause_ == kGcCauseRelocateHotness) {
++      RemoveDepthDelimiterFromMarkStack(self);
++    }
++    // jiacheng end
+   }
++
+   FinishPhase();
+   CHECK(is_active_);
+   is_active_ = false;
+   thread_running_gc_ = nullptr;
++  // jiacheng start
++  if (is_white_app) {
++    region_space_->Debug();
++    heap_->GetNonMovingSpace()->Debug();
++    heap_->GetLargeObjectsSpace()->Debug();
++    LOG(INFO) << "jiacheng ConcurrentCopying::Runphases() End"
++              << " NanoTime()= " << NanoTime()
++              << " GetGcType()= " << GetGcType()
++              << " current_iteration->GetGcCause()= " << current_iteration->GetGcCause()
++              << " current_iteration->GetClearSoftReferences()= " << current_iteration->GetClearSoftReferences()
++              << " force_evacuate_all_= " << force_evacuate_all_
++              << " background_gen_= " << background_gen_
++              << " young_gen_= " << young_gen_
++              << " current_iteration->GetFreedObjects()= " << current_iteration->GetFreedObjects()
++              << " current_iteration->GetFreedLargeObjects()= " << current_iteration->GetFreedLargeObjects() 
++              << " current_iteration->GetFreedBytes()(MB)= " << current_iteration->GetFreedBytes()/MB
++              << " region_space->GetObjectsAllocated()= " << heap_->GetRegionSpace()->GetObjectsAllocated()
++              << " region_space->GetBytesAllocated()= " << heap_->GetRegionSpace()->GetBytesAllocated()/MB
++              << " mark_num_= " << mark_num_.load(std::memory_order_relaxed)
++              << " mark_from_read_barrier_num_= " << mark_from_read_barrier_num_.load(std::memory_order_relaxed)
++              << " scan_num_= " << scan_num_.load(std::memory_order_relaxed)
++              << " copy_num_= " << copy_num_.load(std::memory_order_relaxed)
++              << " copy_from_barrier_num_= " << copy_from_barrier_num_.load(std::memory_order_relaxed)
++              << " push_on_mark_stack_num_= " << push_on_mark_stack_num_.load(std::memory_order_relaxed)
++              << " read_barrier_num_= " << read_barrier_num_.load(std::memory_order_relaxed)
++              << " copy_launch_object_num_= " << copy_launch_object_num_.load(std::memory_order_relaxed)
++              << " copy_cold_object_num_= " << copy_cold_object_num_.load(std::memory_order_relaxed)
++              << " depth_= " << GetDepth()
++              ;
++  }
++  heap_->SetDuringGcFlag(false);
++  // jiacheng end
+ }
+ 
+ class ConcurrentCopying::ActivateReadBarrierEntrypointsCheckpoint : public Closure {
+@@ -393,6 +447,9 @@ void ConcurrentCopying::BindBitmaps() {
+                                                    space->End(),
+                                                    AgeCardVisitor(),
+                                                    VoidFunctor());
++        // jiacheng start
++        } else if (background_gen_) {
++        // jiacheng end
+         } else {
+           // In a full-heap GC cycle, the card-table corresponding to region-space and
+           // non-moving space can be cleared, because this cycle only needs to
+@@ -402,7 +459,12 @@ void ConcurrentCopying::BindBitmaps() {
+           // be captured after the thread-flip of this GC cycle, as that is when
+           // the young-gen for the next GC cycle starts getting populated.
+           heap_->GetCardTable()->ClearCardRange(space->Begin(), space->Limit());
++          
++          // jiacheng start
++          heap_->GetCardTable2()->ClearCardRange(space->Begin(), space->Limit());
++          // jiacheng end
+         }
++
+       } else {
+         if (space == region_space_) {
+           // It is OK to clear the bitmap with mutators running since the only place it is read is
+@@ -419,6 +481,17 @@ void ConcurrentCopying::BindBitmaps() {
+       space->AsLargeObjectSpace()->CopyLiveToMarked();
+     }
+   }
++  // jiacheng start
++  if (background_gen_) {
++    region_space_->CopyForegroundToMarked();
++
++    heap_->GetNonMovingSpace()->AsDlMallocSpace()->CopyForegroundToMarked();
++
++    for (const auto& space : GetHeap()->GetDiscontinuousSpaces()) {
++      space->AsLargeObjectSpace()->CopyForegroundToMarked();
++    }
++  }
++  // jiacheng end
+ }
+ 
+ void ConcurrentCopying::InitializePhase() {
+@@ -443,16 +516,32 @@ void ConcurrentCopying::InitializePhase() {
+   objects_moved_.store(0, std::memory_order_relaxed);
+   bytes_moved_gc_thread_ = 0;
+   objects_moved_gc_thread_ = 0;
+-  GcCause gc_cause = GetCurrentIteration()->GetGcCause();
+-
++  // jiacheng start
++  // GcCause gc_cause = GetCurrentIteration()->GetGcCause();
++  // jiachegn end
+   force_evacuate_all_ = false;
+-  if (!use_generational_cc_ || !young_gen_) {
+-    if (gc_cause == kGcCauseExplicit ||
+-        gc_cause == kGcCauseCollectorTransition ||
++
++  // jiacheng start
++  // if (!use_generational_cc_ || !young_gen_) {
++  //   if (gc_cause == kGcCauseExplicit ||
++  //       gc_cause == kGcCauseCollectorTransition ||
++  //       GetCurrentIteration()->GetClearSoftReferences()) {
++  //     force_evacuate_all_ = true;
++  //   }
++  // }
++  if (!use_generational_cc_ || (!young_gen_ && !background_gen_)) {
++    if (gc_cause_ == kGcCauseExplicit ||
++        gc_cause_ == kGcCauseCollectorTransition ||
++        gc_cause_ == kGcCauseRelocateHotness ||
+         GetCurrentIteration()->GetClearSoftReferences()) {
+       force_evacuate_all_ = true;
+     }
+   }
++  if (jiacheng::IsWhiteApp()) {
++    LOG(INFO) << "jiacheng force_evacuate_all_= " << force_evacuate_all_;
++  }
++  // jiacheng end
++  
+   if (kUseBakerReadBarrier) {
+     updated_all_immune_objects_.store(false, std::memory_order_relaxed);
+     // GC may gray immune objects in the thread flip.
+@@ -476,7 +565,10 @@ void ConcurrentCopying::InitializePhase() {
+     }
+     LOG(INFO) << "GC end of InitializePhase";
+   }
+-  if (use_generational_cc_ && !young_gen_) {
++  // jiacheng start
++  // if (use_generational_cc_ && !young_gen_) {
++  if (use_generational_cc_ && !young_gen_ && !background_gen_) {
++  // jiacheng end
+     region_space_bitmap_->Clear();
+   }
+   mark_stack_mode_.store(ConcurrentCopying::kMarkStackModeThreadLocal, std::memory_order_relaxed);
+@@ -573,6 +665,11 @@ class ConcurrentCopying::FlipCallback : public Closure {
+     if (kVerifyNoMissingCardMarks && cc->young_gen_) {
+       cc->VerifyNoMissingCardMarks();
+     }
++    // jiacheng start
++    else if (kVerifyNoMissingCardMarks && cc->background_gen_) {
++      cc->VerifyNoMissingCardMarks();
++    }
++    // jiacheng end
+     CHECK_EQ(thread, self);
+     Locks::mutator_lock_->AssertExclusiveHeld(self);
+     space::RegionSpace::EvacMode evac_mode = space::RegionSpace::kEvacModeLivePercentNewlyAllocated;
+@@ -582,6 +679,13 @@ class ConcurrentCopying::FlipCallback : public Closure {
+     } else if (cc->force_evacuate_all_) {
+       evac_mode = space::RegionSpace::kEvacModeForceAll;
+     }
++    // jiacheng start
++    else if (cc->background_gen_) {
++      evac_mode = space::RegionSpace::kEvacModeBackgroundGen;
++      // delete it
++      // evac_mode = space::RegionSpace::kEvacModeNewlyAllocated;
++    }
++    // jiacheng end
+     {
+       TimingLogger::ScopedTiming split2("(Paused)SetFromSpace", cc->GetTimings());
+       // Only change live bytes for 1-phase full heap CC.
+@@ -782,9 +886,6 @@ void ConcurrentCopying::VerifyNoMissingCardMarks() {
+ 
+ // Switch threads that from from-space to to-space refs. Forward/mark the thread roots.
+ void ConcurrentCopying::FlipThreadRoots() {
+-  // jiacheng start
+-  LOG(INFO) << "jiacheng debug concurrent_copying.cc 786 FlipThreadRoots()";
+-  // jiacehng end
+   TimingLogger::ScopedTiming split("FlipThreadRoots", GetTimings());
+   if (kVerboseMode || heap_->dump_region_info_before_gc_) {
+     LOG(INFO) << "time=" << region_space_->Time();
+@@ -840,9 +941,6 @@ class ConcurrentCopying::GrayImmuneObjectVisitor {
+ };
+ 
+ void ConcurrentCopying::GrayAllDirtyImmuneObjects() {
+-  // jiacheng start
+-  LOG(INFO) << "jiacheng debug concurrent_copying.cc 841 GrayAllDirtyImmuneObjects()";
+-  // jiacehng end
+   TimingLogger::ScopedTiming split("GrayAllDirtyImmuneObjects", GetTimings());
+   accounting::CardTable* const card_table = heap_->GetCardTable();
+   Thread* const self = Thread::Current();
+@@ -880,6 +978,50 @@ void ConcurrentCopying::GrayAllDirtyImmuneObjects() {
+                                               gc::accounting::CardTable::kCardAged);
+     }
+   }
++  // jiacheng start
++  if (background_gen_) {
++    for (const auto& space : heap_->GetContinuousSpaces()) {
++      if (space->IsImageSpace() || space->IsZygoteSpace()) {
++        continue;
++      }
++      CHECK(space == region_space_ || space == heap_->non_moving_space_);
++      heap_->GetCardTable2()->ModifyCardsAtomic(
++        space->Begin(), 
++        space->End(),
++        [](uint8_t card) {
++          return (card != gc::accounting::CardTable::kCardClean)
++              ? gc::accounting::CardTable::kCardAged
++              : card;
++        },
++        VoidFunctor());
++
++      heap_->GetCardTable2()->Scan</*kClearCard=*/ false>(
++        space->GetMarkBitmap(),
++        space->Begin(),
++        space->End(),
++        visitor,
++        gc::accounting::CardTable::kCardAged);
++    }
++    // for (const auto& space : heap_->GetDiscontinuousSpaces()) {
++    //   heap_->GetCardTable2()->ModifyCardsAtomic(
++    //     space->Begin(), 
++    //     space->End(),
++    //     [](uint8_t card) {
++    //       return (card != gc::accounting::CardTable::kCardClean)
++    //           ? gc::accounting::CardTable::kCardAged
++    //           : card;
++    //     },
++    //     VoidFunctor());
++
++    //   heap_->GetCardTable2()->Scan</*kClearCard=*/ false>(
++    //     space->GetMarkBitmap(),
++    //     space->Begin(),
++    //     space->End(),
++    //     visitor,
++    //     gc::accounting::CardTable::kCardAged);
++    // }
++  }
++  // jiacheng end
+ }
+ 
+ void ConcurrentCopying::GrayAllNewlyDirtyImmuneObjects() {
+@@ -931,6 +1073,11 @@ inline void ConcurrentCopying::ScanImmuneObject(mirror::Object* obj) {
+     // Young GC does not care about references to unevac space. It is safe to not gray these as
+     // long as scan immune objects happens after scanning the dirty cards.
+     Scan<true>(obj);
++  // jiacheng start
++  } else if (background_gen_) {
++    // Scan</*kNoUnEvac*/true>(obj);
++    Scan</*kNoUnEvac*/false>(obj);
++  // jiacheng end
+   } else {
+     Scan<false>(obj);
+   }
+@@ -1167,17 +1314,9 @@ class ConcurrentCopying::ComputeLiveBytesAndMarkRefFieldsVisitor {
+ };
+ 
+ void ConcurrentCopying::AddLiveBytesAndScanRef(mirror::Object* ref) {
+-  // jiacheng start
+-  // DCHECK(ref != nullptr);
+-  // DCHECK(!immune_spaces_.ContainsObject(ref));
+-  // DCHECK(TestMarkBitmapForRef(ref));
+-  CHECK(ref != nullptr);
+-  CHECK(!immune_spaces_.ContainsObject(ref));
+-  CHECK(TestMarkBitmapForRef(ref));
+-  if (reinterpret_cast<size_t>(ref) < 0xffff) {
+-    return;
+-  }
+-  // jiacheng end
++  DCHECK(ref != nullptr);
++  DCHECK(!immune_spaces_.ContainsObject(ref));
++  DCHECK(TestMarkBitmapForRef(ref));
+   size_t obj_region_idx = static_cast<size_t>(-1);
+   if (LIKELY(region_space_->HasAddress(ref))) {
+     obj_region_idx = region_space_->RegionIdxForRefUnchecked(ref);
+@@ -1302,6 +1441,9 @@ class ConcurrentCopying::ImmuneSpaceCaptureRefsVisitor {
+   ALWAYS_INLINE void operator()(mirror::Object* obj) const REQUIRES_SHARED(Locks::mutator_lock_) {
+     ComputeLiveBytesAndMarkRefFieldsVisitor</*kHandleInterRegionRefs*/ false>
+         visitor(collector_, /*obj_region_idx*/ static_cast<size_t>(-1));
++    // jiacheng start
++    collector_->heap_->AddWs(obj);
++    // jiacheng end
+     obj->VisitReferences</*kVisitNativeRoots=*/true, kDefaultVerifyFlags, kWithoutReadBarrier>(
+         visitor, visitor);
+   }
+@@ -1376,13 +1518,16 @@ class ConcurrentCopying::ImmuneSpaceCaptureRefsVisitor {
+ */
+ 
+ void ConcurrentCopying::MarkingPhase() {
+-  // jiacheng start
+-  LOG(INFO) << "jiacheng debug concurrent_copying.cc 1374 MarkingPhase()";
+-  // jiacheng end
+   TimingLogger::ScopedTiming split("MarkingPhase", GetTimings());
+   if (kVerboseMode) {
+     LOG(INFO) << "GC MarkingPhase";
+   }
++  // jiacheng start
++  if (jiacheng::IsWhiteApp()) {
++    LOG(INFO) << "jiacheng ConcurrentCopying::MarkingPhase()"
++              << " GetPerceptibleFlag()= " << heap_->GetPerceptibleFlag();
++  }
++  // jiacheng end
+   accounting::CardTable* const card_table = heap_->GetCardTable();
+   Thread* const self = Thread::Current();
+   // Clear live_bytes_ of every non-free region, except the ones that are newly
+@@ -1427,18 +1572,6 @@ void ConcurrentCopying::MarkingPhase() {
+   // Capture thread roots
+   CaptureThreadRootsForMarking();
+ 
+-  // jiacheng start
+-  {
+-    TimingLogger::ScopedTiming split2("VisitRegionRememberedSet", GetTimings());
+-    LOG(INFO) << "jiacheng concurrent_copying.cc 1394";
+-    RegionRememberedObjectsAsRootVisitor root_visitor(this);
+-    region_space_->VisitRememberedObjectsAsRoot(root_visitor);
+-    // TODO remove
+-    RegionRememberedObjectsVisitor visitor(this);
+-    region_space_->VisitRememberedObjects(visitor);
+-  }
+-  // jiacheng end
+-
+   // Process mark stack
+   ProcessMarkStackForMarkingAndComputeLiveBytes();
+ 
+@@ -1464,9 +1597,6 @@ void ConcurrentCopying::ScanDirtyObject(mirror::Object* obj) {
+ 
+ // Concurrently mark roots that are guarded by read barriers and process the mark stack.
+ void ConcurrentCopying::CopyingPhase() {
+-  // jiacheng start
+-  LOG(INFO) << "jiacheng debug concurrent_copying.cc 1468 CopyingPhase()";
+-  // jiacheng end
+   TimingLogger::ScopedTiming split("CopyingPhase", GetTimings());
+   if (kVerboseMode) {
+     LOG(INFO) << "GC CopyingPhase";
+@@ -1515,7 +1645,10 @@ void ConcurrentCopying::CopyingPhase() {
+       //   which is an immune space.
+       // - In the case where we run without a boot image, these classes are allocated in the
+       //   non-moving space (see art::ClassLinker::InitWithoutImage).
+-      card_table->Scan<false>(
++      // jiacheng start
++      // card_table->Scan<false>(
++      uint32_t card_scan_num1 = card_table->Scan<false>(
++      // jiacheng end
+           space->GetMarkBitmap(),
+           space->Begin(),
+           space->End(),
+@@ -1539,6 +1672,10 @@ void ConcurrentCopying::CopyingPhase() {
+                 }
+               }
+               ScanDirtyObject</*kNoUnEvac*/ true>(obj);
++            // jiacheng start
++            // } else if (background_gen_) { // TODO
++              // don't do anything
++            // jiacheng end
+             } else if (space != region_space_) {
+               DCHECK(space == heap_->non_moving_space_);
+               // We need to process un-evac references as they may be unprocessed,
+@@ -1552,7 +1689,16 @@ void ConcurrentCopying::CopyingPhase() {
+           },
+           accounting::CardTable::kCardAged);
+ 
+-      if (!young_gen_) {
++      // jiacheng start
++      if (jiacheng::IsWhiteApp()) {
++        LOG(INFO) << "jiacheng CopyingPhase() card_scan_num1= " << card_scan_num1;
++      }
++      // jiacheng end
++
++      // jiacheng start
++      // if (!young_gen_) {
++      if (!young_gen_ && !background_gen_) {
++      // jiacheng end
+         auto visitor = [this](mirror::Object* obj) REQUIRES_SHARED(Locks::mutator_lock_) {
+                          // We don't need to process un-evac references as any unprocessed
+                          // ones will be taken care of in the card-table scan above.
+@@ -1568,6 +1714,7 @@ void ConcurrentCopying::CopyingPhase() {
+               visitor);
+         }
+       }
++
+     }
+     // Done scanning unevac space.
+     done_scanning_.store(true, std::memory_order_release);
+@@ -1577,17 +1724,49 @@ void ConcurrentCopying::CopyingPhase() {
+       LOG(INFO) << "GC end of ScanCardsForSpace";
+     }
+   }
++
+   // jiacheng start
+-  {
+-    LOG(INFO) << "jiacheng concurrent_copying.cc 1570";
+-    RegionRememberedObjectsAsRootVisitor root_visitor(this);
+-    region_space_->VisitRememberedObjectsAsRoot(root_visitor);
+-    // TODO remove
+-    RegionRememberedObjectsVisitor visitor(this);
+-    region_space_->VisitRememberedObjects(visitor);
++  if (background_gen_) {
++    TimingLogger::ScopedTiming split2("ScanForegroundSpaces", GetTimings());
++
++    WriterMutexLock rmu(Thread::Current(), *Locks::heap_bitmap_lock_);
++    for (const auto& space : heap_->GetContinuousSpaces()) {
++      if (space->IsImageSpace() || space->IsZygoteSpace()) {
++        continue;
++      }
++      CHECK(space == region_space_ || space == heap_->non_moving_space_);
++      ImmuneSpaceScanObjVisitor visitor(this);
++      uint32_t card_scan_num2 = heap_->GetCardTable2()->Scan</*kClearCard=*/ false>(
++        space->GetMarkBitmap(),
++        space->Begin(),
++        space->End(),
++        visitor,
++        gc::accounting::CardTable::kCardAged);
++      if (jiacheng::IsWhiteApp()) {
++        LOG(INFO) << "jiacheng CopyingPhase() card_scan_num2= " << card_scan_num2;
++      }
++    }
++
++    // Don't need this
++    // for (const auto& space : heap_->GetContinuousSpaces()) {
++    //   if (space->IsImageSpace() || space->IsZygoteSpace()) {
++    //     continue;
++    //   }
++    //   CHECK(space == region_space_ || space == heap_->non_moving_space_);
++    //   ImmuneSpaceScanObjVisitor visitor(this);
++    //   space->GetMarkBitmap()->VisitMarkedRange(
++    //       reinterpret_cast<uintptr_t>(space->Begin()), 
++    //       reinterpret_cast<uintptr_t>(space->End()), 
++    //       visitor);
++    // }
++
++    // Don't need this
++    // for (const auto& space : heap_->GetDiscontinuousSpaces()) {
++    //   ImmuneSpaceScanObjVisitor visitor(this);
++    //   space->GetMarkBitmap()->VisitAllMarked(visitor);
++    // }
+   }
+   // jiacheng end
+-
+   {
+     // For a sticky-bit collection, this phase needs to be after the card scanning since the
+     // mutator may read an unevac space object out of an image object. If the image object is no
+@@ -1646,7 +1825,15 @@ void ConcurrentCopying::CopyingPhase() {
+     TimingLogger::ScopedTiming split5("VisitNonThreadRoots", GetTimings());
+     Runtime::Current()->VisitNonThreadRoots(this);
+   }
+-
++  // jiacheng start
++  if (gc_cause_ == kGcCauseRelocateHotness) {
++    PushDepthDelimiterOntoMarkStack(self);
++    LOG(INFO) << "jiacheng ProcessMarkStackOnce() Before"
++              << " push_on_mark_stack_num_= " << push_on_mark_stack_num_.load(std::memory_order_relaxed)
++              << " depth= " << GetDepth();
++    IncDepth(); 
++  }
++  // jiacheng end
+   {
+     TimingLogger::ScopedTiming split7("ProcessMarkStack", GetTimings());
+     // We transition through three mark stack modes (thread-local, shared, GC-exclusive). The
+@@ -1844,6 +2031,9 @@ void ConcurrentCopying::PushOntoMarkStack(Thread* const self, mirror::Object* to
+   CHECK_EQ(is_mark_stack_push_disallowed_.load(std::memory_order_relaxed), 0)
+       << " " << to_ref << " " << mirror::Object::PrettyTypeOf(to_ref);
+   CHECK(thread_running_gc_ != nullptr);
++  // jiacheng start
++  push_on_mark_stack_num_.fetch_add(1, std::memory_order_relaxed);
++  // jiacheng end
+   MarkStackMode mark_stack_mode = mark_stack_mode_.load(std::memory_order_relaxed);
+   if (LIKELY(mark_stack_mode == kMarkStackModeThreadLocal)) {
+     if (LIKELY(self == thread_running_gc_)) {
+@@ -2140,12 +2330,66 @@ bool ConcurrentCopying::ProcessMarkStackOnce() {
+                                               REQUIRES_SHARED(Locks::mutator_lock_) {
+                                             ProcessMarkStackRef(ref);
+                                           });
+-    while (!gc_mark_stack_->IsEmpty()) {
+-      mirror::Object* to_ref = gc_mark_stack_->PopBack();
+-      ProcessMarkStackRef(to_ref);
+-      ++count;
++
++    // jiacheng start
++    // For thread local stacks, we use the same current depth for gc mark stack. 
++    // Because it is only for the hotness relocation gc, there is few read barrier when the app is in the background.
++    // jiacheng end
++
++    // jiacheng start
++    // while (!gc_mark_stack_->IsEmpty()) {
++    //   mirror::Object* to_ref = gc_mark_stack_->PopBack();
++    //   ProcessMarkStackRef(to_ref);
++    //   ++count;
++    // }
++    // gc_mark_stack_->Reset();
++    
++    if (gc_cause_ == kGcCauseRelocateHotness) {
++      // we could not use gc_mark_stack_->PopFront(), because it is a mmap space
++      // TODO: change gc_mark_stack_ to a queue
++      std::vector<mirror::Object*> refs;
++      while (true) {
++        refs.clear();
++        {
++          // Mutator threads will push ref into their their local stack
++          // There is NO other thread touching the gc_mark_stack_
++          // So we don't need lock
++          // MutexLock mu(thread_running_gc_, mark_stack_lock_); 
++          if (gc_mark_stack_->Size() == 1) {
++            break;
++          }
++          for (StackReference<mirror::Object>* p = gc_mark_stack_->Begin();
++              p != gc_mark_stack_->End(); ++p) {
++            refs.push_back(p->AsMirrorPtr());
++          }
++          gc_mark_stack_->Reset();
++        }
++        // we will stop when meetting the first element here
++        // becaue the first element is the delimiter
++        // BFS
++        for (mirror::Object* ref : refs) {
++          if (static_cast<uint32_t>(reinterpret_cast<uint64_t>(ref)) == kDepthDelimiter) {
++            LOG(INFO) << "jiacheng ProcessMarkStackOnce() kMarkStackModeThreadLocal"
++                      << " push_on_mark_stack_num_= " << push_on_mark_stack_num_.load(std::memory_order_relaxed)
++                      << " depth= " << GetDepth();
++            IncDepth();
++            PushDepthDelimiterOntoMarkStack(self);
++          } else {
++            ProcessMarkStackRef(ref);
++            ++count;
++          }
++        }
++
++      }
++    } else {
++      while (!gc_mark_stack_->IsEmpty()) {
++        mirror::Object* to_ref = gc_mark_stack_->PopBack();
++        ProcessMarkStackRef(to_ref);
++        ++count;
++      }
++      gc_mark_stack_->Reset();
+     }
+-    gc_mark_stack_->Reset();
++    // jiacheng end
+   } else if (mark_stack_mode == kMarkStackModeShared) {
+     // Do an empty checkpoint to avoid a race with a mutator preempted in the middle of a read
+     // barrier but before pushing onto the mark stack. b/32508093. Note the weak ref access is
+@@ -2164,6 +2408,11 @@ bool ConcurrentCopying::ProcessMarkStackOnce() {
+         if (gc_mark_stack_->IsEmpty()) {
+           break;
+         }
++        // jiacheng start
++        if (gc_cause_ == kGcCauseRelocateHotness && gc_mark_stack_->Size() == 1) {
++          break;
++        }
++        // jiacheng end
+         for (StackReference<mirror::Object>* p = gc_mark_stack_->Begin();
+              p != gc_mark_stack_->End(); ++p) {
+           refs.push_back(p->AsMirrorPtr());
+@@ -2171,8 +2420,22 @@ bool ConcurrentCopying::ProcessMarkStackOnce() {
+         gc_mark_stack_->Reset();
+       }
+       for (mirror::Object* ref : refs) {
+-        ProcessMarkStackRef(ref);
+-        ++count;
++        // jiacheng start
++        // ProcessMarkStackRef(ref);
++        // ++count;
++
++        // It is already BFS
++        if (static_cast<uint32_t>(reinterpret_cast<uint64_t>(ref)) == kDepthDelimiter) {
++          LOG(INFO) << "jiacheng ProcessMarkStackOnce() kMarkStackModeShared"
++                    << " push_on_mark_stack_num_= " << push_on_mark_stack_num_.load(std::memory_order_relaxed)
++                    << " depth= " << GetDepth();
++          IncDepth();
++          PushDepthDelimiterOntoMarkStack(self);
++        } else {
++          ProcessMarkStackRef(ref);
++          ++count;
++        }
++        // jiacheng end
+       }
+     }
+   } else {
+@@ -2183,12 +2446,53 @@ bool ConcurrentCopying::ProcessMarkStackOnce() {
+       CHECK(revoked_mark_stacks_.empty());
+     }
+     // Process the GC mark stack in the exclusive mode. No need to take the lock.
+-    while (!gc_mark_stack_->IsEmpty()) {
+-      mirror::Object* to_ref = gc_mark_stack_->PopBack();
+-      ProcessMarkStackRef(to_ref);
+-      ++count;
++
++    // jiacheng start
++    // while (!gc_mark_stack_->IsEmpty()) {
++    //   mirror::Object* to_ref = gc_mark_stack_->PopBack();
++    //   ProcessMarkStackRef(to_ref);
++    //   ++count;
++    // }
++    // gc_mark_stack_->Reset();
++
++    if (gc_cause_ == kGcCauseRelocateHotness) {
++      std::vector<mirror::Object*> refs;
++      while (true) {
++        refs.clear();
++        {
++          // MutexLock mu(thread_running_gc_, mark_stack_lock_);
++          if (gc_mark_stack_->Size() == 1) {
++            break;
++          }
++          for (StackReference<mirror::Object>* p = gc_mark_stack_->Begin();
++               p != gc_mark_stack_->End(); ++p) {
++            refs.push_back(p->AsMirrorPtr());
++          }
++          gc_mark_stack_->Reset();
++        }
++        // BFS
++        for (mirror::Object* ref : refs) {
++          if (static_cast<uint32_t>(reinterpret_cast<uint64_t>(ref)) == kDepthDelimiter) {
++            LOG(INFO) << "jiacheng ProcessMarkStackOnce() kMarkStackModeGcExclusive"
++                      << " push_on_mark_stack_num_= " << push_on_mark_stack_num_.load(std::memory_order_relaxed)
++                      << " depth= " << GetDepth();
++            IncDepth();
++            PushDepthDelimiterOntoMarkStack(self);
++          } else {
++            ProcessMarkStackRef(ref);
++            ++count;
++          }
++        }
++      }
++    } else {
++      while (!gc_mark_stack_->IsEmpty()) {
++        mirror::Object* to_ref = gc_mark_stack_->PopBack();
++        ProcessMarkStackRef(to_ref);
++        ++count;
++      }
++      gc_mark_stack_->Reset();
+     }
+-    gc_mark_stack_->Reset();
++    // jiacheng end
+   }
+ 
+   // Return true if the stack was empty.
+@@ -2260,6 +2564,12 @@ inline void ConcurrentCopying::ProcessMarkStackRef(mirror::Object* to_ref) {
+           CHECK(region_space_->IsLargeObject(to_ref));
+           region_space_->ZeroLiveBytesForLargeObject(to_ref);
+         }
++        // jiacheng start
++        else if (background_gen_) {
++          CHECK(region_space_->IsLargeObject(to_ref));
++          region_space_->ZeroLiveBytesForLargeObject(to_ref); 
++        }
++        // jiacheng end
+         perform_scan = true;
+         // Only add to the live bytes if the object was not already marked and we are not the young
+         // GC.
+@@ -2279,18 +2589,6 @@ inline void ConcurrentCopying::ProcessMarkStackRef(mirror::Object* to_ref) {
+       }
+       perform_scan = true;
+       break;
+-    // jiacheng start
+-    case space::RegionSpace::RegionType::kRegionTypeColdToSpace:
+-      region_space_bitmap_->Set(to_ref);
+-      perform_scan = true;
+-      break;
+-    case space::RegionSpace::RegionType::kRegionTypeColdSpace:
+-      if(!region_space_bitmap_->Set(to_ref)) { // old word == 0
+-        perform_scan = true;
+-        add_to_live_bytes = true;
+-      }
+-      break;
+-    // jiacheng end
+     default:
+       DCHECK(!region_space_->HasAddress(to_ref)) << to_ref;
+       DCHECK(!immune_spaces_.ContainsObject(to_ref));
+@@ -2332,6 +2630,11 @@ inline void ConcurrentCopying::ProcessMarkStackRef(mirror::Object* to_ref) {
+   if (perform_scan) {
+     if (use_generational_cc_ && young_gen_) {
+       Scan<true>(to_ref);
++    // jiacheng start
++    } else if (background_gen_) {
++      // Scan<true>(to_ref);
++      Scan<false>(to_ref);
++    // jiacheng end
+     } else {
+       Scan<false>(to_ref);
+     }
+@@ -2478,7 +2781,15 @@ void ConcurrentCopying::CheckEmptyMarkStack() {
+   } else {
+     // Shared, GC-exclusive, or off.
+     MutexLock mu(thread_running_gc_, mark_stack_lock_);
+-    CHECK(gc_mark_stack_->IsEmpty());
++    // jiacheng start
++    // CHECK(gc_mark_stack_->IsEmpty());
++    if (gc_cause_ == kGcCauseRelocateHotness) {
++      CHECK((GetDepth() == 0 && gc_mark_stack_->IsEmpty()) || 
++            (GetDepth() > 0 && gc_mark_stack_->Size() == 1));
++    } else {
++      CHECK(gc_mark_stack_->IsEmpty());
++    }
++    // jiacheng end
+     CHECK(revoked_mark_stacks_.empty());
+   }
+ }
+@@ -2493,6 +2804,32 @@ void ConcurrentCopying::Sweep(bool swap_bitmaps) {
+   if (use_generational_cc_ && young_gen_) {
+     // Only sweep objects on the live stack.
+     SweepArray(heap_->GetLiveStack(), /* swap_bitmaps= */ false);
++  // jiacheng start
++  } else if (background_gen_) {
++    SweepArray(heap_->GetLiveStack(), /* swap_bitmaps= */ false);
++    // {
++    //   TimingLogger::ScopedTiming t("MarkStackAsLive", GetTimings());
++    //   accounting::ObjectStack* live_stack = heap_->GetLiveStack();
++    //   if (kEnableFromSpaceAccountingCheck) {
++    //     // Ensure that nobody inserted items in the live stack after we swapped the stacks.
++    //     CHECK_GE(live_stack_freeze_size_, live_stack->Size());
++    //   }
++    //   heap_->MarkAllocStackAsLive(live_stack);
++    //   live_stack->Reset();
++    // }
++    // CheckEmptyMarkStack();
++    // TimingLogger::ScopedTiming split("Sweep", GetTimings());
++    // for (const auto& space : GetHeap()->GetContinuousSpaces()) {
++    //   if (space->IsContinuousMemMapAllocSpace() && space != region_space_
++    //       && !immune_spaces_.ContainsSpace(space)) {
++    //     space::ContinuousMemMapAllocSpace* alloc_space = space->AsContinuousMemMapAllocSpace();
++    //     TimingLogger::ScopedTiming split2(
++    //         alloc_space->IsZygoteSpace() ? "SweepZygoteSpace" : "SweepAllocSpace", GetTimings());
++    //     RecordFree(alloc_space->Sweep(swap_bitmaps));
++    //   }
++    // }
++    // SweepLargeObjects(swap_bitmaps);
++  // jiacheng end
+   } else {
+     {
+       TimingLogger::ScopedTiming t("MarkStackAsLive", GetTimings());
+@@ -2693,7 +3030,10 @@ void ConcurrentCopying::CaptureRssAtPeak() {
+     // card table
+     add_gc_range(heap_->GetCardTable()->MemMapBegin(), heap_->GetCardTable()->MemMapSize());
+     // inter-region refs
+-    if (use_generational_cc_ && !young_gen_) {
++    // jiachegn start
++    // if (use_generational_cc_ && !young_gen_) {
++    if (use_generational_cc_ && !young_gen_ && !background_gen_) {
++    // jiacheng end
+       // region space
+       add_gc_range(region_space_inter_region_bitmap_->Begin(),
+                    region_space_inter_region_bitmap_->Size());
+@@ -2707,9 +3047,6 @@ void ConcurrentCopying::CaptureRssAtPeak() {
+ }
+ 
+ void ConcurrentCopying::ReclaimPhase() {
+-  // jiacheng start
+-  LOG(INFO) << "jiacheng debug concurrent_copying.cc 2711 ReclaimPhase()";
+-  // jiacheng end
+   TimingLogger::ScopedTiming split("ReclaimPhase", GetTimings());
+   if (kVerboseMode) {
+     LOG(INFO) << "GC ReclaimPhase";
+@@ -2770,7 +3107,10 @@ void ConcurrentCopying::ReclaimPhase() {
+     uint64_t cleared_objects;
+     {
+       TimingLogger::ScopedTiming split4("ClearFromSpace", GetTimings());
++      // jiacheng start
++      // region_space_->ClearFromSpace(&cleared_bytes, &cleared_objects, /*clear_bitmap*/ !young_gen_);
+       region_space_->ClearFromSpace(&cleared_bytes, &cleared_objects, /*clear_bitmap*/ !young_gen_);
++      // jiacheng end
+       // `cleared_bytes` and `cleared_objects` may be greater than the from space equivalents since
+       // RegionSpace::ClearFromSpace may clear empty unevac regions.
+       CHECK_GE(cleared_bytes, from_bytes);
+@@ -2809,6 +3149,18 @@ void ConcurrentCopying::ReclaimPhase() {
+     SwapBitmaps();
+     heap_->UnBindBitmaps();
+ 
++    // jiacheng start
++    if (gc_cause_ == kGcCauseRelocateHotness) {
++      region_space_->CopyMarkedToForeground();
++      
++      heap_->GetNonMovingSpace()->CopyMarkedToForeground();
++
++      for (const auto& space : GetHeap()->GetDiscontinuousSpaces()) {
++        space->AsLargeObjectSpace()->CopyMarkedToForeground();
++      }
++    }
++    // jiacheng end
++
+     // The bitmap was cleared at the start of the GC, there is nothing we need to do here.
+     DCHECK(region_space_bitmap_ != nullptr);
+     region_space_bitmap_ = nullptr;
+@@ -2886,21 +3238,7 @@ void ConcurrentCopying::AssertToSpaceInvariant(mirror::Object* obj,
+           Thread::Current()->DumpJavaStack(LOG_STREAM(FATAL_WITHOUT_ABORT));
+         }
+         CHECK(IsMarkedInUnevacFromSpace(ref)) << ref;
+-     } 
+-     // jiacheng start
+-     else if (type == RegionType::kRegionTypeColdToSpace){
+-       return;
+-     } else if (type == RegionType::kRegionTypeColdSpace) {
+-        if (!IsMarkedInColdSpace(ref)) {
+-          LOG(FATAL_WITHOUT_ABORT) << "Found unmarked reference in cold-space:";
+-          region_space_->Unprotect();
+-          LOG(FATAL_WITHOUT_ABORT) << DumpHeapReference(obj, offset, ref);
+-          Thread::Current()->DumpJavaStack(LOG_STREAM(FATAL_WITHOUT_ABORT));
+-        }
+-        CHECK(IsMarkedInColdSpace(ref)) << ref;
+-     }
+-     // jiacheng end     
+-     else {
++     } else {
+         // Not OK: either a from-space ref or a reference in an unused region.
+         if (type == RegionType::kRegionTypeFromSpace) {
+           LOG(FATAL_WITHOUT_ABORT) << "Found from-space reference:";
+@@ -3005,20 +3343,7 @@ void ConcurrentCopying::AssertToSpaceInvariant(GcRootSource* gc_root_source,
+           LOG(FATAL_WITHOUT_ABORT) << DumpGcRoot(ref);
+         }
+         CHECK(IsMarkedInUnevacFromSpace(ref)) << ref;
+-      } 
+-      // jiacheng start
+-     else if (type == RegionType::kRegionTypeColdToSpace){
+-       return;
+-     } else if (type == RegionType::kRegionTypeColdSpace) {
+-        if (!IsMarkedInColdSpace(ref)) {
+-          LOG(FATAL_WITHOUT_ABORT) << "Found unmarked reference in cold-space:";
+-          region_space_->Unprotect();
+-          LOG(FATAL_WITHOUT_ABORT) << DumpGcRoot(ref);
+-        }
+-        CHECK(IsMarkedInColdSpace(ref)) << ref;
+-     }
+-      // jiacheng end
+-      else {
++      } else {
+         // Not OK: either a from-space ref or a reference in an unused region.
+         if (type == RegionType::kRegionTypeFromSpace) {
+           LOG(FATAL_WITHOUT_ABORT) << "Found from-space reference:";
+@@ -3211,15 +3536,6 @@ class ConcurrentCopying::RefFieldsVisitor {
+ 
+ template <bool kNoUnEvac>
+ inline void ConcurrentCopying::Scan(mirror::Object* to_ref) {
+-  // jiacheng start 
+-  // 除了Scan还有很多其他地方对to_ref进行访问，例如检查barrier state
+-  if(region_space_->IsInColdSpace(to_ref)) {
+-    return;
+-  }
+-  if (!region_space_->IsInColdSpace(to_ref)) {
+-    jiacheng::GCAccessTrigger(to_ref);
+-  }
+-  // jiacheng end
+   // Cannot have `kNoUnEvac` when Generational CC collection is disabled.
+   DCHECK(!kNoUnEvac || use_generational_cc_);
+   if (kDisallowReadBarrierDuringScan && !Runtime::Current()->IsActiveTransaction()) {
+@@ -3230,6 +3546,12 @@ inline void ConcurrentCopying::Scan(mirror::Object* to_ref) {
+   }
+   DCHECK(!region_space_->IsInFromSpace(to_ref));
+   DCHECK_EQ(Thread::Current(), thread_running_gc_);
++  // jiacheng start
++  if (jiacheng::IsWhiteApp()) {
++    scan_num_.fetch_add(1, std::memory_order_relaxed);
++    heap_->AddWs(to_ref);
++  }
++  // jiacheng end
+   RefFieldsVisitor<kNoUnEvac> visitor(this, thread_running_gc_);
+   // Disable the read barrier for a performance reason.
+   to_ref->VisitReferences</*kVisitNativeRoots=*/true, kDefaultVerifyFlags, kWithoutReadBarrier>(
+@@ -3490,17 +3812,24 @@ mirror::Object* ConcurrentCopying::Copy(Thread* const self,
+   size_t bytes_allocated = 0U;
+   size_t dummy;
+   bool fall_back_to_non_moving = false;
++
+   // jiacheng start
+   // mirror::Object* to_ref = region_space_->AllocNonvirtual</*kForEvac=*/ true>(
+   //     region_space_alloc_size, &region_space_bytes_allocated, nullptr, &dummy);
+   mirror::Object* to_ref = nullptr;
+-  if (jiacheng::Profiler::Current()->ShouldSwapOut(from_ref)) {
+-    to_ref = region_space_->AllocCold(region_space_alloc_size, &region_space_bytes_allocated, nullptr, &dummy);
+-    // LOG(INFO) << "jiacheng concurrent_copying.cc 3415 region_space_->AllocCold()" 
+-    //           << " region_space_alloc_size= " << region_space_alloc_size 
+-    //           << " to_ref= " << to_ref
+-    //           ;
++
++  if (GetCurrentIteration()->GetGcCause() == kGcCauseRelocateHotness) {
++    if (self != thread_running_gc_) {
++      to_ref = region_space_->AllocWorkingSet(region_space_alloc_size, &region_space_bytes_allocated, nullptr, &dummy);
++    } else if (jiacheng::ENABLE_FYO && region_space_->IsInNewlyAllocatedRegion(from_ref)) {
++      to_ref = region_space_->AllocLaunch(region_space_alloc_size, &region_space_bytes_allocated, nullptr, &dummy);
++    } else if (jiacheng::ENABLE_NRO && GetDepth() <= jiacheng::NEAR_TO_ROOT_THRESHOLD) {
++      to_ref = region_space_->AllocLaunch(region_space_alloc_size, &region_space_bytes_allocated, nullptr, &dummy);
++    } else {
++      to_ref = region_space_->AllocCold(region_space_alloc_size, &region_space_bytes_allocated, nullptr, &dummy);
++    }
+   }
++      
+   if (to_ref == nullptr) {
+     to_ref = region_space_->AllocNonvirtual</*kForEvac*/ true>(
+             region_space_alloc_size, &region_space_bytes_allocated, nullptr, &dummy);
+@@ -3553,9 +3882,6 @@ mirror::Object* ConcurrentCopying::Copy(Thread* const self,
+   // static_assert(kObjectHeaderSize == sizeof(mirror::HeapReference<mirror::Class>) +
+   //                   sizeof(LockWord),
+   //               "Object header size does not match");
+-  static_assert(kObjectHeaderSize == sizeof(mirror::HeapReference<mirror::Class>) +
+-                    sizeof(LockWord) + sizeof(uint64_t),
+-                "Object header size does not match");
+   // jiacheng end
+   // Memcpy can tear for words since it may do byte copy. It is only safe to do this since the
+   // object in the from space is immutable other than the lock word. b/31423258
+@@ -3563,14 +3889,13 @@ mirror::Object* ConcurrentCopying::Copy(Thread* const self,
+          reinterpret_cast<const uint8_t*>(from_ref) + kObjectHeaderSize,
+          obj_size - kObjectHeaderSize);
+   // jiacheng start
+-  jiacheng::GCAccessTrigger(to_ref);
+-  jiacheng::GCAccessTrigger(from_ref);
++  to_ref->CopyHeaderFrom(from_ref);
++  copy_num_.fetch_add(1, std::memory_order_relaxed);
++  if (self != thread_running_gc_) {
++    copy_from_barrier_num_.fetch_add(1, std::memory_order_relaxed);
++  }
+   // jiacheng end
+ 
+-  // jiacheng debug start
+-  CHECK(region_space_->IsInFromSpace(from_ref)) << (region_space_->GetRegionType(from_ref)) << (region_space_->GetRegionType(to_ref));
+-  // jiacheng debug end
+-
+   // Attempt to install the forward pointer. This is in a loop as the
+   // lock word atomic write can fail.
+   while (true) {
+@@ -3609,12 +3934,8 @@ mirror::Object* ConcurrentCopying::Copy(Thread* const self,
+       to_ref = reinterpret_cast<mirror::Object*>(old_lock_word.ForwardingAddress());
+       CHECK(to_ref != nullptr);
+       CHECK_NE(to_ref, lost_fwd_ptr);
+-      // jiacheng start
+-      // CHECK(region_space_->IsInToSpace(to_ref) || heap_->non_moving_space_->HasAddress(to_ref))
+-      //     << "to_ref=" << to_ref << " " << heap_->DumpSpaces();
+-      CHECK(region_space_->IsInToSpace(to_ref) || heap_->non_moving_space_->HasAddress(to_ref) || region_space_->IsInColdToSpace(to_ref))
++      CHECK(region_space_->IsInToSpace(to_ref) || heap_->non_moving_space_->HasAddress(to_ref))
+           << "to_ref=" << to_ref << " " << heap_->DumpSpaces();
+-      // jiacheng end
+       CHECK_NE(to_ref->GetLockWord(false).GetState(), LockWord::kForwardingAddress);
+       return to_ref;
+     }
+@@ -3653,7 +3974,10 @@ mirror::Object* ConcurrentCopying::Copy(Thread* const self,
+       } else {
+         DCHECK(heap_->non_moving_space_->HasAddress(to_ref));
+         DCHECK_EQ(bytes_allocated, non_moving_space_bytes_allocated);
+-        if (!use_generational_cc_ || !young_gen_) {
++        // jiacheng start
++        // if (!use_generational_cc_ || !young_gen_) {
++        if (!use_generational_cc_ || (!young_gen_ && !background_gen_)) {
++        // jiacheng end
+           // Mark it in the live bitmap.
+           CHECK(!heap_->non_moving_space_->GetLiveBitmap()->AtomicTestAndSet(to_ref));
+         }
+@@ -3697,19 +4021,7 @@ mirror::Object* ConcurrentCopying::IsMarked(mirror::Object* from_ref) {
+     } else {
+       to_ref = nullptr;
+     }
+-  } 
+-  // jiacheng start
+-  else if (rtype == space::RegionSpace::RegionType::kRegionTypeColdToSpace){
+-    return from_ref;
+-  } else if (rtype == space::RegionSpace::RegionType::kRegionTypeColdSpace) {
+-    if (IsMarkedInColdSpace(from_ref)) {
+-      to_ref = from_ref;
+-    } else {
+-      to_ref = nullptr;
+-    }
+-  }
+-  // jiacheng end
+-  else {
++  } else {
+     // At this point, `from_ref` should not be in the region space
+     // (i.e. within an "unused" region).
+     DCHECK(!region_space_->HasAddress(from_ref)) << from_ref;
+@@ -3825,9 +4137,6 @@ mirror::Object* ConcurrentCopying::MarkNonMoving(Thread* const self,
+ }
+ 
+ void ConcurrentCopying::FinishPhase() {
+-  // jiacheng start
+-  LOG(INFO) << "jiacheng debug concurrent_copying.cc 3829 FinishPhase()";
+-  // jiacheng end
+   Thread* const self = Thread::Current();
+   {
+     MutexLock mu(self, mark_stack_lock_);
+@@ -3839,7 +4148,10 @@ void ConcurrentCopying::FinishPhase() {
+     TimingLogger::ScopedTiming split("ClearRegionSpaceCards", GetTimings());
+     // We do not currently use the region space cards at all, madvise them away to save ram.
+     heap_->GetCardTable()->ClearCardRange(region_space_->Begin(), region_space_->Limit());
+-  } else if (use_generational_cc_ && !young_gen_) {
++  // jiacheng start
++  // } else if (use_generational_cc_ && !young_gen_) {
++  } else if (use_generational_cc_ && !young_gen_ && !background_gen_) {
++  // jiacheng end
+     region_space_inter_region_bitmap_->Clear();
+     non_moving_space_inter_region_bitmap_->Clear();
+   }
+@@ -3993,29 +4305,45 @@ void ConcurrentCopying::DumpPerformanceInfo(std::ostream& os) {
+ }
+ 
+ // jiacheng start
+-mirror::Object* ConcurrentCopying::MarkColdSpaceRegion(Thread* const self, 
+-                                                       mirror::Object* ref, 
+-                                                       accounting::SpaceBitmap<kObjectAlignment>* bitmap) {
+-  if (bitmap->Test(ref)) {
+-    return ref;
+-  }
+-  bool success = ref->AtomicSetReadBarrierState(/* expected_rb_state= */ ReadBarrier::NonGrayState(),
+-                                             /* rb_state= */ ReadBarrier::GrayState());
+-  if (success) {
+-    DCHECK_EQ(ref->GetReadBarrierState(), ReadBarrier::GrayState());
+-    PushOntoMarkStack(self, ref);
++void ConcurrentCopying::PushDepthDelimiterOntoMarkStack(Thread* const self) {
++  CHECK_EQ(is_mark_stack_push_disallowed_.load(std::memory_order_relaxed), 0);
++  CHECK(thread_running_gc_ != nullptr);
++  MarkStackMode mark_stack_mode = mark_stack_mode_.load(std::memory_order_relaxed);
++  mirror::Object* fake_object = reinterpret_cast<mirror::Object*>(static_cast<uint64_t>(kDepthDelimiter));
++
++  if (LIKELY(mark_stack_mode == kMarkStackModeThreadLocal)) {
++    if (LIKELY(self == thread_running_gc_)) {
++      CHECK(self->GetThreadLocalMarkStack() == nullptr);
++      if (UNLIKELY(gc_mark_stack_->IsFull())) {
++        ExpandGcMarkStack();
++      }
++      gc_mark_stack_->PushBack(fake_object);
++    } else {
++      CHECK(false);
++    }
++
++  } else if (mark_stack_mode == kMarkStackModeShared) {
++    MutexLock mu(self, mark_stack_lock_);
++    if (UNLIKELY(gc_mark_stack_->IsFull())) {
++      ExpandGcMarkStack();
++    }
++    gc_mark_stack_->PushBack(fake_object);
++  } else {
++    CHECK(self == thread_running_gc_);
++    if (UNLIKELY(gc_mark_stack_->IsFull())) {
++      ExpandGcMarkStack();
++    }
++    gc_mark_stack_->PushBack(fake_object);
+   }
+-  return ref;
+ }
+ 
+-bool ConcurrentCopying::IsMarkedInColdSpace(mirror::Object* from_ref) {
+-  DCHECK(region_space_->IsInColdSpace(from_ref));
+-  if (from_ref->GetReadBarrierStateAcquire() == ReadBarrier::GrayState()) {
+-    return true;
+-  } else if (done_scanning_.load(std::memory_order_acquire)) {
+-    return region_space_bitmap_->Test(from_ref);
+-  }
+-  return false;
++
++void ConcurrentCopying::RemoveDepthDelimiterFromMarkStack(Thread* const self) {
++  CHECK(thread_running_gc_ == self);
++  CHECK(!gc_mark_stack_->IsEmpty());
++  mirror::Object* ref = gc_mark_stack_->PopBack();
++  CHECK(static_cast<uint32_t>(reinterpret_cast<uint64_t>(ref)) == kDepthDelimiter);
++  CHECK(gc_mark_stack_->IsEmpty());
+ }
+ 
+ // jiacheng end
+diff --git a/runtime/gc/collector/concurrent_copying.h b/runtime/gc/collector/concurrent_copying.h
+index 8e369e960d..f9e1d1cdc9 100644
+--- a/runtime/gc/collector/concurrent_copying.h
++++ b/runtime/gc/collector/concurrent_copying.h
+@@ -65,6 +65,10 @@ class ConcurrentCopying : public GarbageCollector {
+   // pages.
+   static constexpr bool kGrayDirtyImmuneObjects = true;
+ 
++  // jiacheng start
++  static constexpr uint32_t kDepthDelimiter = 0xFFFFFFFF;
++  // jiacheng end
++
+   ConcurrentCopying(Heap* heap,
+                     bool young_gen,
+                     bool use_generational_cc,
+@@ -72,6 +76,40 @@ class ConcurrentCopying : public GarbageCollector {
+                     bool measure_read_barrier_slow_path = false);
+   ~ConcurrentCopying();
+ 
++  // jiacheng start
++  void SetRelocateHotness(bool relocate_hotness) {
++    relocate_hotness_ = relocate_hotness;
++  }
++
++  bool GetRelocateHotness() {
++    return relocate_hotness_;
++  }
++
++  uint32_t GetDepth() {
++    return depth_.load(std::memory_order_relaxed);
++  }
++
++  void SetDepth(uint32_t gc_depth) {
++    depth_.store(gc_depth, std::memory_order_relaxed);
++  }
++
++  void IncDepth() {
++    depth_.fetch_add(1, std::memory_order_relaxed);
++  }
++
++  void PushDepthDelimiterOntoMarkStack(Thread* const self)       
++      REQUIRES_SHARED(Locks::mutator_lock_)
++      REQUIRES(!mark_stack_lock_);
++
++  void RemoveDepthDelimiterFromMarkStack(Thread* const self)       
++      REQUIRES_SHARED(Locks::mutator_lock_)
++      REQUIRES(!mark_stack_lock_);
++
++  Thread* GetThreadRunningGc() {
++    return thread_running_gc_;
++  }
++  // jiacheng end
++
+   void RunPhases() override
+       REQUIRES(!immune_gray_stack_lock_,
+                !mark_stack_lock_,
+@@ -235,10 +273,6 @@ class ConcurrentCopying : public GarbageCollector {
+       REQUIRES(!mark_stack_lock_, !skipped_blocks_lock_, !immune_gray_stack_lock_);
+   bool IsMarkedInUnevacFromSpace(mirror::Object* from_ref)
+       REQUIRES_SHARED(Locks::mutator_lock_);
+-  // jiacheng start
+-  bool IsMarkedInColdSpace(mirror::Object* from_ref)
+-      REQUIRES_SHARED(Locks::mutator_lock_);
+-  // jiacheng end
+   bool IsMarkedInNonMovingSpace(mirror::Object* from_ref)
+       REQUIRES_SHARED(Locks::mutator_lock_);
+   bool IsNullOrMarkedHeapReference(mirror::HeapReference<mirror::Object>* field,
+@@ -302,13 +336,6 @@ class ConcurrentCopying : public GarbageCollector {
+       accounting::SpaceBitmap<kObjectAlignment>* bitmap)
+       REQUIRES_SHARED(Locks::mutator_lock_)
+       REQUIRES(!mark_stack_lock_, !skipped_blocks_lock_);
+-// jiacheng start
+-  mirror::Object* MarkColdSpaceRegion(Thread* const self,
+-      mirror::Object* from_ref,
+-      accounting::SpaceBitmap<kObjectAlignment>* bitmap)
+-      REQUIRES_SHARED(Locks::mutator_lock_)
+-      REQUIRES(!mark_stack_lock_, !skipped_blocks_lock_);
+-// jiacheng end
+   template<bool kGrayImmuneObject>
+   ALWAYS_INLINE mirror::Object* MarkImmuneSpace(Thread* const self,
+                                                 mirror::Object* from_ref)
+@@ -345,6 +372,10 @@ class ConcurrentCopying : public GarbageCollector {
+   // Generational "sticky", only trace through dirty objects in region space.
+   const bool young_gen_;
+ 
++  // jiacheng start
++  bool background_gen_;
++  // jiacheng end
++
+   // If true, the GC thread is done scanning marked objects on dirty and aged
+   // card (see ConcurrentCopying::CopyingPhase).
+   Atomic<bool> done_scanning_;
+@@ -472,6 +503,12 @@ class ConcurrentCopying : public GarbageCollector {
+   // Use signed because after_gc may be larger than before_gc.
+   int64_t num_bytes_allocated_before_gc_;
+ 
++  // jiacheng start
++  GcCause gc_cause_;
++
++  std::atomic<uint32_t> depth_;
++  // jiacheng end
++
+   class ActivateReadBarrierEntrypointsCallback;
+   class ActivateReadBarrierEntrypointsCheckpoint;
+   class AssertToSpaceInvariantFieldVisitor;
+@@ -494,10 +531,6 @@ class ConcurrentCopying : public GarbageCollector {
+   class VerifyNoFromSpaceRefsVisitor;
+   class VerifyNoMissingCardMarkVisitor;
+   class ImmuneSpaceCaptureRefsVisitor;
+-  // jiacheng start
+-  class RegionRememberedObjectsVisitor;
+-  class RegionRememberedObjectsAsRootVisitor;
+-  // jiacheng end
+   template <bool kAtomicTestAndSet = false> class CaptureRootsForMarkingVisitor;
+   class CaptureThreadRootsForMarkingAndCheckpoint;
+   template <bool kHandleInterRegionRefs> class ComputeLiveBytesAndMarkRefFieldsVisitor;
+diff --git a/runtime/gc/collector/garbage_collector.cc b/runtime/gc/collector/garbage_collector.cc
+index 565d38e6ec..ca4f4bf73a 100644
+--- a/runtime/gc/collector/garbage_collector.cc
++++ b/runtime/gc/collector/garbage_collector.cc
+@@ -40,6 +40,8 @@
+ 
+ // jiacheng start
+ #include "jiacheng_hack.h"
++#include "jiacheng_utils.h"
++#include "gc/space/region_space-inl.h"
+ // jiacheng end
+ 
+ namespace art {
+@@ -148,11 +150,6 @@ uint64_t GarbageCollector::ExtractRssFromMincore(
+ }
+ 
+ void GarbageCollector::Run(GcCause gc_cause, bool clear_soft_references) {
+-
+-  // jiacheng start
+-  jiacheng::BeforeGarbageCollectorRun(this);
+-  // jiacheng end
+-
+   ScopedTrace trace(android::base::StringPrintf("%s %s GC", PrettyCause(gc_cause), GetName()));
+   Thread* self = Thread::Current();
+   uint64_t start_time = NanoTime();
+@@ -160,6 +157,7 @@ void GarbageCollector::Run(GcCause gc_cause, bool clear_soft_references) {
+   GetHeap()->CalculatePreGcWeightedAllocatedBytes();
+   Iteration* current_iteration = GetCurrentIteration();
+   current_iteration->Reset(gc_cause, clear_soft_references);
++
+   // Note transaction mode is single-threaded and there's no asynchronous GC and this flag doesn't
+   // change in the middle of a GC.
+   is_transaction_active_ = Runtime::Current()->IsActiveTransaction();
+@@ -191,10 +189,6 @@ void GarbageCollector::Run(GcCause gc_cause, bool clear_soft_references) {
+     pause_histogram_.AdjustAndAddValue(pause_time);
+   }
+   is_transaction_active_ = false;
+-
+-  // jiacheng start
+-  jiacheng::AfterGarbageCollectorRun(this);
+-  // jiacheng end  
+ }
+ 
+ void GarbageCollector::SwapBitmaps() {
+diff --git a/runtime/gc/collector/garbage_collector.h b/runtime/gc/collector/garbage_collector.h
+index 7505658413..dbdb61cd53 100644
+--- a/runtime/gc/collector/garbage_collector.h
++++ b/runtime/gc/collector/garbage_collector.h
+@@ -64,6 +64,7 @@ class GarbageCollector : public RootVisitor, public IsMarkedVisitor, public Mark
+   const char* GetName() const {
+     return name_.c_str();
+   }
++
+   virtual GcType GetGcType() const = 0;
+   virtual CollectorType GetCollectorType() const = 0;
+   // Run the garbage collector.
+@@ -164,6 +165,20 @@ class GarbageCollector : public RootVisitor, public IsMarkedVisitor, public Mark
+   mutable Mutex pause_histogram_lock_ DEFAULT_MUTEX_ACQUIRED_AFTER;
+   bool is_transaction_active_;
+ 
++  // jiacheng start
++  Atomic<uint64_t> copy_launch_object_num_;
++  Atomic<uint64_t> copy_cold_object_num_;
++  bool relocate_hotness_;
++
++  std::atomic<uint64_t> mark_num_;
++  std::atomic<uint64_t> mark_from_read_barrier_num_;
++  std::atomic<uint64_t> scan_num_;
++  std::atomic<uint64_t> copy_num_;
++  std::atomic<uint64_t> copy_from_barrier_num_;
++  std::atomic<uint64_t> push_on_mark_stack_num_;
++  std::atomic<uint64_t> read_barrier_num_;
++  // jiacheng end
++
+  private:
+   DISALLOW_IMPLICIT_CONSTRUCTORS(GarbageCollector);
+ };
+diff --git a/runtime/gc/gc_cause.cc b/runtime/gc/gc_cause.cc
+index 8b4bac2f8d..2171a7617d 100644
+--- a/runtime/gc/gc_cause.cc
++++ b/runtime/gc/gc_cause.cc
+@@ -46,6 +46,9 @@ const char* PrettyCause(GcCause cause) {
+     case kGcCauseHprof: return "Hprof";
+     case kGcCauseGetObjectsAllocated: return "ObjectsAllocated";
+     case kGcCauseProfileSaver: return "ProfileSaver";
++    // jiacheng start
++    case kGcCauseRelocateHotness: return "RelocateHotness";
++    // jiacheng end
+   }
+   LOG(FATAL) << "Unreachable";
+   UNREACHABLE();
+diff --git a/runtime/gc/gc_cause.h b/runtime/gc/gc_cause.h
+index 81781ceeb7..b5bc7e9f53 100644
+--- a/runtime/gc/gc_cause.h
++++ b/runtime/gc/gc_cause.h
+@@ -62,6 +62,9 @@ enum GcCause {
+   kGcCauseGetObjectsAllocated,
+   // GC cause for the profile saver.
+   kGcCauseProfileSaver,
++  // jiacheng start
++  kGcCauseRelocateHotness,
++  // jiacheng end
+ };
+ 
+ const char* PrettyCause(GcCause cause);
+diff --git a/runtime/gc/heap-inl.h b/runtime/gc/heap-inl.h
+index 1c09b5c9bf..126593325e 100644
+--- a/runtime/gc/heap-inl.h
++++ b/runtime/gc/heap-inl.h
+@@ -38,6 +38,10 @@
+ #include "verify_object.h"
+ #include "write_barrier-inl.h"
+ 
++// jiacheng start
++#include "jiacheng_barrier.h"
++// jiacheng end
++
+ namespace art {
+ namespace gc {
+ 
+@@ -382,6 +386,9 @@ inline mirror::Object* Heap::TryToAllocate(Thread* self,
+       ret = nullptr;
+     }
+   }
++  // jiacheng start
++  jiacheng::AllocationNewBarrier(reinterpret_cast<uint64_t>(ret));
++  // jiacheng end
+   return ret;
+ }
+ 
+diff --git a/runtime/gc/heap.cc b/runtime/gc/heap.cc
+index 0d9a2a4e9c..bdabae97c3 100644
+--- a/runtime/gc/heap.cc
++++ b/runtime/gc/heap.cc
+@@ -95,6 +95,8 @@
+ 
+ // jiacheng start
+ #include "jiacheng_hack.h"
++#include "jiacheng_global.h"
++#include "jiacheng_utils.h"
+ // jiacheng end
+ 
+ namespace art {
+@@ -314,7 +316,19 @@ Heap::Heap(size_t initial_size,
+       unique_backtrace_count_(0u),
+       gc_disabled_for_shutdown_(false),
+       dump_region_info_before_gc_(dump_region_info_before_gc),
+-      dump_region_info_after_gc_(dump_region_info_after_gc) {
++      // jiacheng start
++      // dump_region_info_after_gc_(dump_region_info_after_gc) {
++      dump_region_info_after_gc_(dump_region_info_after_gc),
++
++      during_gc_flag_(false),
++      perceptible_flag_(false),
++      pending_relocate_hotness_(nullptr),
++      done_relocate_hotness_flag_(false),
++      hot_launch_flag_(false),
++      madvise_spaces_size_(nullptr),
++      mutator_ws_lock_("mutator_ws_lock_", kJiachengWorkingSetLock),
++      gc_ws_lock_("gc_ws_lock_", kJiachengWorkingSetLock) {
++      // jiacheng end
+   if (VLOG_IS_ON(heap) || VLOG_IS_ON(startup)) {
+     LOG(INFO) << "Heap() entering";
+   }
+@@ -597,6 +611,13 @@ Heap::Heap(size_t initial_size,
+   card_table_.reset(accounting::CardTable::Create(reinterpret_cast<uint8_t*>(kMinHeapAddress),
+                                                   4 * GB - kMinHeapAddress));
+   CHECK(card_table_.get() != nullptr) << "Failed to create card table";
++
++  // jiacheng start
++  card_table2_.reset(accounting::CardTable::Create(reinterpret_cast<uint8_t*>(kMinHeapAddress),
++                                                  4 * GB - kMinHeapAddress));
++  CHECK(card_table2_.get() != nullptr) << "Failed to create card table2";
++  // jiacheng end
++
+   if (foreground_collector_type_ == kCollectorTypeCC && kUseTableLookupReadBarrier) {
+     rb_table_.reset(new accounting::ReadBarrierTable());
+     DCHECK(rb_table_->IsAllCleared());
+@@ -724,26 +745,6 @@ Heap::Heap(size_t initial_size,
+   }
+ }
+ 
+-// jiacheng start
+-void Heap::JiachengDebug() {
+-  // 用于显示Heap当前的信息
+-  Thread* self = Thread::Current();
+-  (void)self;
+-  
+-  MutexLock mu(self, *gc_complete_lock_);
+-  LOG(INFO) << "jiacheng heap.cc 732"
+-            << " last_gc_type_= " << last_gc_type_
+-            << " next_gc_type_= " << next_gc_type_
+-            << " current_allocator_= " << current_allocator_
+-            << " current_non_moving_allocator_= " << current_non_moving_allocator_
+-            ;
+-  for (size_t i = 0; i < gc_plan_.size(); ++i) {
+-    LOG(INFO) << "jiacheng heap.cc 732"
+-              << " gc_plan_[" << i << "]= " << gc_plan_[i]
+-              ;
+-  }
+-}
+-// jiacheng end
+ 
+ MemMap Heap::MapAnonymousPreferredAddress(const char* name,
+                                           uint8_t* request_begin,
+@@ -998,8 +999,16 @@ void Heap::ThreadFlipEnd(Thread* self) {
+ 
+ void Heap::UpdateProcessState(ProcessState old_process_state, ProcessState new_process_state) {
+   // jiacheng start
+-  jiacheng::Profiler::Current()->SetSwitchingFlag();
+-  jiacheng::UpdataAppState(old_process_state, new_process_state);
++  const bool is_white_app = jiacheng::IsWhiteApp();
++  if (is_white_app) {
++    if (new_process_state == kProcessStateJankImperceptible &&
++        GetPerceptibleFlag()) {
++      ForeToBack();
++    } else if (new_process_state == kProcessStateJankPerceptible && 
++               !GetPerceptibleFlag()) {
++      BackToFore();
++    }
++  }
+   // jiacheng end
+   
+   if (old_process_state != new_process_state) {
+@@ -1021,10 +1030,19 @@ void Heap::UpdateProcessState(ProcessState old_process_state, ProcessState new_p
+       // special handling which does a homogenous space compaction once but then doesn't transition
+       // the collector. Similarly, we invoke a full compaction for kCollectorTypeCC but don't
+       // transition the collector.
+-      RequestCollectorTransition(background_collector_type_,
+-                                 kStressCollectorTransition
+-                                     ? 0
+-                                     : kCollectorTransitionWait);
++
++      // jiacheng start
++      // RequestCollectorTransition(background_collector_type_,
++      //                            kStressCollectorTransition
++      //                                ? 0
++      //                                : kCollectorTransitionWait);
++      if (jiacheng::ENABLE_APGC && is_white_app) {
++        RequestRelocateHotness(jiacheng::WINDOW_SIZE_BACKGROUND_WS * 1e9);
++      } else {
++        RequestCollectorTransition(background_collector_type_,
++                                   kStressCollectorTransition ? 0 : kCollectorTransitionWait);
++      }
++      // jiacheng end
+     }
+   }
+ }
+@@ -2789,8 +2807,11 @@ collector::GcType Heap::CollectGarbageInternal(collector::GcType gc_type,
+         if (use_generational_cc_) {
+           // TODO: Other threads must do the flip checkpoint before they start poking at
+           // active_concurrent_copying_collector_. So we should not concurrency here.
+-          active_concurrent_copying_collector_ = (gc_type == collector::kGcTypeSticky) ?
+-              young_concurrent_copying_collector_ : concurrent_copying_collector_;
++          // jiacheng start
++          // active_concurrent_copying_collector_ = (gc_type == collector::kGcTypeSticky) ?
++          //     young_concurrent_copying_collector_ : concurrent_copying_collector_;
++          active_concurrent_copying_collector_ = concurrent_copying_collector_;
++          // jiacheng end
+           DCHECK(active_concurrent_copying_collector_->RegionSpace() == region_space_);
+         }
+         collector = active_concurrent_copying_collector_;
+@@ -2860,7 +2881,11 @@ void Heap::LogGC(GcCause gc_cause, collector::GarbageCollector* collector) {
+     }
+   }
+   // jiacheng start
+-  log_gc = true;
++  if (jiacheng::IsWhiteApp()) {
++    log_gc = true;
++  } else {
++    log_gc = false;
++  }
+   // jiacheng end
+   if (log_gc) {
+     const size_t percent_free = GetPercentFree();
+@@ -2871,7 +2896,11 @@ void Heap::LogGC(GcCause gc_cause, collector::GarbageCollector* collector) {
+       pause_string << PrettyDuration((pause_times[i] / 1000) * 1000)
+                    << ((i != pause_times.size() - 1) ? "," : "");
+     }
+-    LOG(INFO) << gc_cause << " " << collector->GetName()
++    // jiacheng start
++    // LOG(INFO) << gc_cause << " " << collector->GetName()
++    LOG(INFO) << "jiacheng LogGC() "
++              << gc_cause << " " << collector->GetName()
++    // jiacheng end
+               << " GC freed "  << current_gc_iteration_.GetFreedObjects() << "("
+               << PrettySize(current_gc_iteration_.GetFreedBytes()) << ") AllocSpace objects, "
+               << current_gc_iteration_.GetFreedLargeObjects() << "("
+@@ -3425,7 +3454,10 @@ void Heap::ProcessCards(TimingLogger* timings,
+           // aligned. Align up so that the check in ClearCardRange does not fail.
+           end = AlignUp(end, accounting::CardTable::kCardSize);
+         }
+-        card_table_->ClearCardRange(space->Begin(), end);
++        // jiacheng start
++        // card_table_->ClearCardRange(space->Begin(), end);
++        GetCardTable()->ClearCardRange(space->Begin(), end);
++        // jiacheng end
+       } else {
+         // No mod union table for the AllocSpace. Age the cards so that the GC knows that these
+         // cards were dirty before the GC started.
+@@ -3434,8 +3466,12 @@ void Heap::ProcessCards(TimingLogger* timings,
+         // The races are we either end up with: Aged card, unaged card. Since we have the
+         // checkpoint roots and then we scan / update mod union tables after. We will always
+         // scan either card. If we end up with the non aged card, we scan it it in the pause.
+-        card_table_->ModifyCardsAtomic(space->Begin(), space->End(), AgeCardVisitor(),
++        // jiacheng start
++        // card_table_->ModifyCardsAtomic(space->Begin(), space->End(), AgeCardVisitor(),
++        //                                VoidFunctor());
++        GetCardTable()->ModifyCardsAtomic(space->Begin(), space->End(), AgeCardVisitor(),
+                                        VoidFunctor());
++        // jiacheng end
+       }
+     }
+   }
+@@ -3717,6 +3753,7 @@ void Heap::GrowForUtilization(collector::GarbageCollector* collector_ran,
+     } else {
+       next_gc_type_ = non_sticky_gc_type;
+     }
++
+     // If we have freed enough memory, shrink the heap back down.
+     if (bytes_allocated + adjusted_max_free < target_footprint) {
+       target_size = bytes_allocated + adjusted_max_free;
+@@ -3726,7 +3763,9 @@ void Heap::GrowForUtilization(collector::GarbageCollector* collector_ran,
+   }
+   CHECK_LE(target_size, std::numeric_limits<size_t>::max());
+   if (!ignore_target_footprint_) {
++
+     SetIdealFootprint(target_size);
++
+     if (IsGcConcurrent()) {
+       const uint64_t freed_bytes = current_gc_iteration_.GetFreedBytes() +
+           current_gc_iteration_.GetFreedLargeObjectBytes() +
+@@ -4464,5 +4503,166 @@ void Heap::PostForkChildAction(Thread* self) {
+   }
+ }
+ 
++
++// jiacheng start
++
++void Heap::ForeToBack() {
++  LOG(INFO) << "jiacheng Heap::ForeToBack()";
++  SetPerceptibleFlag(false);
++  SetDoneRelocateHotness(false);
++}
++
++void Heap::BackToFore() {
++  // defer the switching of foreground mode until a WINDOW_SIZE_HOT_LAUNCH
++  SetHotLaunchFlag(true);
++  LOG(INFO) << "jiacheng Heap::BackToFore() Start";
++
++  auto func = [this](){
++    constexpr uint64_t defer_time = jiacheng::WINDOW_SIZE_HOT_LAUNCH;
++    std::this_thread::sleep_for(std::chrono::seconds(defer_time));
++
++    LOG(INFO) << "jiacheng Heap::BackToFore() End";
++    SetPerceptibleFlag(true);
++    SetDoneRelocateHotness(false);
++    SetHotLaunchFlag(false);
++  };
++  std::thread t(func);
++  t.detach();
++}
++
++void Heap::DoRelocateHotness() {
++  LOG(INFO) << "jiacheng Heap::DoRelocateHotness()";
++  CollectGarbageInternal(collector::kGcTypeFull, kGcCauseRelocateHotness, false);
++}
++
++
++void Heap::ClearRelocateHotness(Thread* self) {
++  MutexLock mu(self, *pending_task_lock_);
++  pending_relocate_hotness_ = nullptr;
++}
++
++
++class Heap::RelocateHotnessTask : public HeapTask {
++public:
++  explicit RelocateHotnessTask(uint64_t target_time) : HeapTask(target_time) {}
++
++  void Run(Thread* self) override {
++    gc::Heap* heap = Runtime::Current()->GetHeap();
++    if (!heap->GetPerceptibleFlag()) {
++      heap->DoRelocateHotness();
++
++      heap->SetDoneRelocateHotness(true);
++      
++      heap->DoMadviseSpacesAsync();
++    }
++    heap->ClearRelocateHotness(self);
++  }
++};
++
++void Heap::RequestRelocateHotness(uint64_t delta_time) {
++  LOG(INFO) << "jiacheng RequestRelocateHotness() delta_time= " << delta_time;
++  Thread* self = Thread::Current();
++  CHECK(CanAddHeapTask(self));
++  RelocateHotnessTask* added_task = nullptr;
++  region_space_->ResetHotness();
++  const uint64_t target_time = NanoTime() + delta_time;
++  {
++    MutexLock mu(self, *pending_task_lock_);
++    if (pending_relocate_hotness_ != nullptr) {
++      task_processor_->UpdateTargetRunTime(self, pending_relocate_hotness_, target_time);
++      return;
++    }
++    added_task = new RelocateHotnessTask(target_time);
++    pending_relocate_hotness_ = added_task;
++  }
++  task_processor_->AddTask(self, added_task);
++}
++
++
++void Heap::JiachengDebug() {
++  LOG(INFO) << "jiacheng heap.cc Heap::JiachengDebug()";
++}
++
++
++size_t Heap::DoMadviseSpaces() {
++  uint64_t duration_time = NanoTime();
++
++  size_t num = 0;
++  num += region_space_->Madvise();
++  // num += non_moving_space_->AsDlMallocSpace()->Madvise();
++  // num += large_object_space_->Madvise();
++  // num += zygote_space_->Madvise();  
++
++  duration_time = NanoTime() - duration_time;
++  LOG(INFO) << "jiacheng heap->DoMadviseSpaces()" 
++            << " duration_time(sec)= " << duration_time / 1e9; 
++  return num;
++}
++
++
++void Heap::DoMadviseSpacesAsync() {
++  auto func = [this]()-> size_t {
++    return DoMadviseSpaces();
++  };
++
++  while (madvise_spaces_size_ != nullptr && 
++      madvise_spaces_size_->wait_for(std::chrono::seconds(1)) != std::future_status::ready) {
++  }
++  madvise_spaces_size_.reset();
++  madvise_spaces_size_ = std::make_unique<std::future<size_t>>(std::async(func));
++}
++
++
++void Heap::JiachengDebugCardTable1() {
++  accounting::ContinuousSpaceBitmap* bitmap = region_space_->GetLiveBitmap();
++  size_t card_num = 0;
++  size_t visit_obj_num = 0;
++  size_t* p_num = &visit_obj_num;
++  card_num = card_table_->Scan<false/*kClearCard*/>(bitmap,
++                                                      region_space_->Begin(),
++                                                      region_space_->End(),
++                                                      [p_num](mirror::Object* obj)
++                                                      REQUIRES(Locks::heap_bitmap_lock_)
++                                                      REQUIRES_SHARED(Locks::mutator_lock_) {
++                                                          (void)obj;
++                                                          ++(*p_num);
++                                                      },
++                                                      accounting::CardTable::kCardAged);
++  LOG(INFO) << "jiacheng JiachengDebugCardTable1() "
++            << " card_num= " << card_num
++            << " visit_obj_num= " << visit_obj_num;
++}
++
++
++void Heap::JiachengDebugCardTable2() {
++  accounting::ContinuousSpaceBitmap* bitmap = region_space_->GetLiveBitmap();
++  size_t card_num = 0;
++  size_t visit_obj_num = 0;
++  size_t* p_num = &visit_obj_num;
++  card_num = card_table2_->Scan<false/*kClearCard*/>(bitmap,
++                                                      region_space_->Begin(),
++                                                      region_space_->End(),
++                                                      [p_num](mirror::Object* obj)
++                                                      REQUIRES(Locks::heap_bitmap_lock_)
++                                                      REQUIRES_SHARED(Locks::mutator_lock_) {
++                                                          (void)obj;
++                                                          ++(*p_num);
++                                                      },
++                                                      accounting::CardTable::kCardAged);
++  LOG(INFO) << "jiacheng JiachengDebugCardTable2() "
++            << " card_num= " << card_num
++            << " visit_obj_num= " << visit_obj_num;
++}
++
++void Heap::AddWs(mirror::Object* obj) {
++  if (Thread::Current() == concurrent_copying_collector_->GetThreadRunningGc() ||
++      Thread::Current() == young_concurrent_copying_collector_->GetThreadRunningGc()) {
++    AddGcWs(obj);
++  } else {
++    AddMutatorWs(obj);
++  }
++}
++// jiacheng end
++
+ }  // namespace gc
+ }  // namespace art
+diff --git a/runtime/gc/heap.h b/runtime/gc/heap.h
+index d7a3400637..db6a646444 100644
+--- a/runtime/gc/heap.h
++++ b/runtime/gc/heap.h
+@@ -21,6 +21,9 @@
+ #include <string>
+ #include <unordered_set>
+ #include <vector>
++// jiacheng start
++#include <future>
++// jiacheng end
+ 
+ #include <android-base/logging.h>
+ 
+@@ -129,7 +132,7 @@ class Heap {
+  public:
+   static constexpr size_t kDefaultStartingSize = kPageSize;
+   // jiacheng start
+-  static constexpr size_t kDefaultInitialSize = 2 * MB;
++  static constexpr size_t kDefaultInitialSize = 2 * MB; // default
+   // static constexpr size_t kDefaultInitialSize = 256 * MB;
+   // jiacheng end
+   static constexpr size_t kDefaultMaximumSize = 256 * MB;
+@@ -225,7 +228,105 @@ class Heap {
+   ~Heap();
+ 
+   // jiacheng start
++  class RelocateHotnessTask;
++
++  void ForeToBack();
++
++  void BackToFore();
++
++  void SetHotLaunchFlag(bool flag) {
++    hot_launch_flag_.store(flag, std::memory_order_relaxed);
++  }
++
++  bool GetHotLaunchFlag() {
++    return hot_launch_flag_.load(std::memory_order_relaxed);
++  }
++
++  void SetDuringGcFlag(bool flag) {
++      during_gc_flag_.store(flag, std::memory_order_relaxed);
++  }
++
++  void SetPerceptibleFlag(bool flag) {
++      perceptible_flag_.store(flag, std::memory_order_relaxed);
++  }
++
++  bool GetPerceptibleFlag(){
++      return perceptible_flag_.load(std::memory_order_relaxed);
++  }
++
++  bool GetDuringGcFlag() {
++      return during_gc_flag_.load(std::memory_order_relaxed);
++  }
++
++  void DoRelocateHotness() REQUIRES(!*gc_complete_lock_, !*pending_task_lock_);
++
++  void ClearRelocateHotness(Thread* self) REQUIRES(!*pending_task_lock_);
++
++  void RequestRelocateHotness(uint64_t delta_time) REQUIRES(!*pending_task_lock_);
++
+   void JiachengDebug();
++
++  void SetDoneRelocateHotness(bool flag) {
++    done_relocate_hotness_flag_.store(flag, std::memory_order_relaxed);
++  }
++
++  bool GetDoneRelocateHotness() {
++    return done_relocate_hotness_flag_.load(std::memory_order_relaxed);
++  }
++
++  size_t DoMadviseSpaces();
++
++  void DoMadviseSpacesAsync();
++
++  void JiachengDebugCardTable1() REQUIRES(Locks::heap_bitmap_lock_) REQUIRES_SHARED(Locks::mutator_lock_);;
++
++  void JiachengDebugCardTable2() REQUIRES(Locks::heap_bitmap_lock_) REQUIRES_SHARED(Locks::mutator_lock_);
++
++
++  void AddMutatorWs(mirror::Object* obj) {
++    mutator_ws_lock_.ExclusiveLock(Thread::Current());
++    mutator_ws_.insert(obj);
++    mutator_ws_lock_.ExclusiveUnlock(Thread::Current());
++  }
++
++  void AddGcWs(mirror::Object* obj) {
++    gc_ws_lock_.ExclusiveLock(Thread::Current());
++    gc_ws_.insert(obj);
++    gc_ws_lock_.ExclusiveUnlock(Thread::Current());
++  }
++
++  void AddWs(mirror::Object* obj);
++
++
++  void ClearMutatorWs() {
++    mutator_ws_lock_.ExclusiveLock(Thread::Current());
++    mutator_ws_.clear();
++    mutator_ws_lock_.ExclusiveUnlock(Thread::Current());
++  }
++
++  void ClearGcWs() {
++    gc_ws_lock_.ExclusiveLock(Thread::Current());
++    gc_ws_.clear();
++    gc_ws_lock_.ExclusiveUnlock(Thread::Current());
++  }
++
++  uint64_t GetMutatorWsSize() {
++    mutator_ws_lock_.ExclusiveLock(Thread::Current());
++    uint64_t result = mutator_ws_.size();
++    mutator_ws_lock_.ExclusiveUnlock(Thread::Current());
++    return result;
++  }
++
++  uint64_t GetGcWsSize() {
++    gc_ws_lock_.ExclusiveLock(Thread::Current());
++    uint64_t result = gc_ws_.size();
++    gc_ws_lock_.ExclusiveUnlock(Thread::Current());
++    return result;
++  }
++
++  
++
++
+   // jiacheng end
+ 
+   // Allocates and initializes storage for an object instance.
+@@ -530,6 +631,12 @@ class Heap {
+     return card_table_.get();
+   }
+ 
++  // jiacheng start
++  accounting::CardTable* GetCardTable2() const {
++    return card_table2_.get();
++  }
++  // jiacheng end
++
+   accounting::ReadBarrierTable* GetReadBarrierTable() const {
+     return rb_table_.get();
+   }
+@@ -1228,6 +1335,10 @@ class Heap {
+   // The card table, dirtied by the write barrier.
+   std::unique_ptr<accounting::CardTable> card_table_;
+ 
++  // jiacheng start
++  std::unique_ptr<accounting::CardTable> card_table2_;
++  // jiacheng end
++
+   std::unique_ptr<accounting::ReadBarrierTable> rb_table_;
+ 
+   // A mod-union table remembers all of the references from the it's space to other spaces.
+@@ -1570,6 +1681,28 @@ class Heap {
+   Atomic<GcPauseListener*> gc_pause_listener_;
+ 
+   std::unique_ptr<Verification> verification_;
++  
++  // jiacheng start
++  std::atomic<bool> during_gc_flag_;
++
++  // Foreground (true), background (false)
++  std::atomic<bool> perceptible_flag_;
++
++  RelocateHotnessTask* pending_relocate_hotness_ GUARDED_BY(pending_task_lock_);
++
++  std::atomic<bool> done_relocate_hotness_flag_;
++
++  std::atomic<bool> hot_launch_flag_; // true: during hot launch, false: otherwise
++
++  std::unique_ptr<std::future<size_t>> madvise_spaces_size_;
++
++
++  Mutex mutator_ws_lock_;
++  std::unordered_set<mirror::Object*> mutator_ws_;
++
++  Mutex gc_ws_lock_;
++  std::unordered_set<mirror::Object*> gc_ws_;
++  // jiacheng end
+ 
+   friend class CollectorTransitionTask;
+   friend class collector::GarbageCollector;
+diff --git a/runtime/gc/space/dlmalloc_space.cc b/runtime/gc/space/dlmalloc_space.cc
+index 7955ff92e6..58fdc851e2 100644
+--- a/runtime/gc/space/dlmalloc_space.cc
++++ b/runtime/gc/space/dlmalloc_space.cc
+@@ -32,6 +32,10 @@
+ #include "thread.h"
+ #include "thread_list.h"
+ 
++// jiacheng start
++#include "jiacheng_utils.h"
++// jiacheng end
++
+ namespace art {
+ namespace gc {
+ namespace space {
+@@ -373,6 +377,28 @@ void DlMallocSpace::LogFragmentationAllocFailure(std::ostream& os,
+      <<  max_contiguous_allocation << " bytes)";
+ }
+ 
++
++// jiacheng start
++uint64_t DlMallocSpace::Madvise() {
++  uint64_t size = 0;
++  WalkCallback walk_callback = [](void* start, void* end, size_t /*num_bytes*/, void* arg) {
++    uint64_t* size_ptr = reinterpret_cast<uint64_t*>(arg);
++    if (start != end) {
++        size_t length = reinterpret_cast<size_t>(end) - reinterpret_cast<size_t>(start);
++        *size_ptr += length;
++        jiacheng::ColdRange(start, length);
++    }
++  };
++  Walk(walk_callback, &size);
++  return size;
++}
++
++bool DlMallocSpace::HandleFault(mirror::Object* obj) {
++  LOG(INFO) << "jiacheng debug DlMallocSpace::HandleFault() obj= " << obj;
++  return false;
++}
++// jiacheng end
++
+ }  // namespace space
+ 
+ namespace allocator {
+diff --git a/runtime/gc/space/dlmalloc_space.h b/runtime/gc/space/dlmalloc_space.h
+index 930f557125..790739f0fe 100644
+--- a/runtime/gc/space/dlmalloc_space.h
++++ b/runtime/gc/space/dlmalloc_space.h
+@@ -52,6 +52,13 @@ class DlMallocSpace : public MallocSpace {
+                                size_t capacity,
+                                bool can_move_objects);
+ 
++
++  // jiacheng start
++  uint64_t Madvise();
++
++  bool HandleFault(mirror::Object* obj);
++  // jiacheng end
++
+   // Virtual to allow MemoryToolMallocSpace to intercept.
+   mirror::Object* AllocWithGrowth(Thread* self,
+                                   size_t num_bytes,
+diff --git a/runtime/gc/space/large_object_space.cc b/runtime/gc/space/large_object_space.cc
+index 2c18888c5f..3d29f884a4 100644
+--- a/runtime/gc/space/large_object_space.cc
++++ b/runtime/gc/space/large_object_space.cc
+@@ -35,6 +35,11 @@
+ #include "space-inl.h"
+ #include "thread-current-inl.h"
+ 
++// jiacheng start
++#include "jiacheng_utils.h"
++#include "jiacheng_hack.h"
++// jiacheng end
++
+ namespace art {
+ namespace gc {
+ namespace space {
+@@ -642,6 +647,66 @@ std::pair<uint8_t*, uint8_t*> FreeListSpace::GetBeginEndAtomic() const {
+   return std::make_pair(Begin(), End());
+ }
+ 
++// jiacheng start
++void LargeObjectSpace::CopyForegroundToMarked() {
++  mark_bitmap_->CopyFrom(foreground_live_bitmap_.get());
++}
++
++void LargeObjectSpace::CopyMarkedToForeground() {
++  foreground_live_bitmap_->CopyFrom(mark_bitmap_.get());
++}
++
++void LargeObjectSpace::Debug() {
++  LOG(INFO) << "jiacheng LargeObjectSpace::Debug()"
++            << " Begin()= " << reinterpret_cast<void*>(Begin())
++            << " End()= " << reinterpret_cast<void*>(End());
++}
++
++uint64_t LargeObjectMapSpace::Madvise() {
++  uint64_t size = 0;
++  DlMallocSpace::WalkCallback walk_callback = [](void* start, void* end, size_t /*num_bytes*/, void* arg) {
++    uint64_t* size_ptr = reinterpret_cast<uint64_t*>(arg);
++    if (start != end) {
++        size_t length = reinterpret_cast<size_t>(end) - reinterpret_cast<size_t>(start);
++        length = RoundDown(length, kPageSize);
++        *size_ptr += length;
++        jiacheng::ColdRange(start, length);
++    }
++  };
++  Walk(walk_callback, &size);
++  LOG(INFO) << "jiacheng debug LargeObjectMapSpace::Madvise()"
++            << " size(mb)= " << float(size)/MB;
++  return size;
++}
++
++uint64_t FreeListSpace::Madvise() {
++  uint64_t size = 0;
++  DlMallocSpace::WalkCallback walk_callback = [](void* start, void* end, size_t /*num_bytes*/, void* arg) {
++    uint64_t* size_ptr = reinterpret_cast<uint64_t*>(arg);
++    if (start != end) {
++        size_t length = reinterpret_cast<size_t>(end) - reinterpret_cast<size_t>(start);
++        *size_ptr += length;
++        jiacheng::ColdRange(start, length);
++    }
++  };
++  Walk(walk_callback, &size);
++  LOG(INFO) << "jiacheng debug FreeListSpace::Madvise()"
++            << " size(mb)= " << float(size)/MB;
++  return size;
++}
++
++bool LargeObjectMapSpace::HandleFault(mirror::Object* obj) {
++  LOG(INFO) << "jiacheng debug LargeObjectMapSpace::HandleFault() obj= " << obj;
++  return false;
++}
++
++bool FreeListSpace::HandleFault(mirror::Object* obj) {
++  LOG(INFO) << "jiacheng debug FreeListSpace::HandleFault() obj= " << obj;
++  return false;
++}
++
++// jiacheng end
++
+ }  // namespace space
+ }  // namespace gc
+ }  // namespace art
+diff --git a/runtime/gc/space/large_object_space.h b/runtime/gc/space/large_object_space.h
+index 4d1cbc0dd0..8acfc07cad 100644
+--- a/runtime/gc/space/large_object_space.h
++++ b/runtime/gc/space/large_object_space.h
+@@ -42,11 +42,24 @@ enum class LargeObjectSpaceType {
+ // Abstraction implemented by all large object spaces.
+ class LargeObjectSpace : public DiscontinuousSpace, public AllocSpace {
+  public:
++ // jiacheng start
++  virtual uint64_t Madvise() = 0;
++
++  virtual bool HandleFault(mirror::Object* obj) = 0;
++
++  void CopyForegroundToMarked() REQUIRES(Locks::heap_bitmap_lock_);
++
++  void CopyMarkedToForeground() REQUIRES(Locks::heap_bitmap_lock_);
++
++  void Debug();
++ // jiacheng end
++
+   SpaceType GetType() const override {
+     return kSpaceTypeLargeObjectSpace;
+   }
+   void SwapBitmaps();
+   void CopyLiveToMarked();
++
+   virtual void Walk(DlMallocSpace::WalkCallback, void* arg) = 0;
+   virtual ~LargeObjectSpace() {}
+ 
+@@ -163,7 +176,10 @@ class LargeObjectMapSpace : public LargeObjectSpace {
+   bool Contains(const mirror::Object* obj) const override NO_THREAD_SAFETY_ANALYSIS;
+   void ForEachMemMap(std::function<void(const MemMap&)> func) const override REQUIRES(!lock_);
+   std::pair<uint8_t*, uint8_t*> GetBeginEndAtomic() const override REQUIRES(!lock_);
+-
++  // jiacheng start
++  uint64_t Madvise() override REQUIRES(!lock_);
++  bool HandleFault(mirror::Object* obj) override;
++  // jiacheng end
+  protected:
+   struct LargeObject {
+     MemMap mem_map;
+@@ -196,7 +212,10 @@ class FreeListSpace final : public LargeObjectSpace {
+   void Dump(std::ostream& os) const override REQUIRES(!lock_);
+   void ForEachMemMap(std::function<void(const MemMap&)> func) const override REQUIRES(!lock_);
+   std::pair<uint8_t*, uint8_t*> GetBeginEndAtomic() const override REQUIRES(!lock_);
+-
++  // jiacheng start
++  uint64_t Madvise() override REQUIRES(!lock_);
++  bool HandleFault(mirror::Object* obj) override;
++  // jiacheng end
+  protected:
+   FreeListSpace(const std::string& name, MemMap&& mem_map, uint8_t* begin, uint8_t* end);
+   size_t GetSlotIndexForAddress(uintptr_t address) const {
+diff --git a/runtime/gc/space/malloc_space.cc b/runtime/gc/space/malloc_space.cc
+index 474231bb40..2a2171be6d 100644
+--- a/runtime/gc/space/malloc_space.cc
++++ b/runtime/gc/space/malloc_space.cc
+@@ -73,6 +73,11 @@ MallocSpace::MallocSpace(const std::string& name,
+         Begin(), NonGrowthLimitCapacity()));
+     CHECK(mark_bitmap_.get() != nullptr) << "could not create allocspace mark bitmap #"
+         << bitmap_index;
++    // jiacheng start
++    foreground_live_bitmap_.reset(accounting::ContinuousSpaceBitmap::Create(
++        StringPrintf("allocspace %s foreground-live-bitmap %d", name.c_str(), static_cast<int>(bitmap_index)),
++        Begin(), NonGrowthLimitCapacity()));
++    // jiacheng end
+   }
+   for (auto& freed : recent_freed_objects_) {
+     freed.first = nullptr;
+@@ -288,6 +293,23 @@ void MallocSpace::ClampGrowthLimit() {
+   limit_ = Begin() + new_capacity;
+ }
+ 
++// jiacheng start
++void MallocSpace::CopyForegroundToMarked() {
++  mark_bitmap_->CopyFrom(foreground_live_bitmap_.get());
++}
++
++void MallocSpace::CopyMarkedToForeground() {
++  foreground_live_bitmap_->CopyFrom(mark_bitmap_.get());
++}
++
++void MallocSpace::Debug() {
++  LOG(INFO) << "jiacheng MallocSpace::Debug()"
++            << " Begin()= " << reinterpret_cast<void*>(Begin())
++            << " End()= " << reinterpret_cast<void*>(End());
++}
++
++// jiacheng end
++
+ }  // namespace space
+ }  // namespace gc
+ }  // namespace art
+diff --git a/runtime/gc/space/malloc_space.h b/runtime/gc/space/malloc_space.h
+index 50006568ca..94ecd6a0b1 100644
+--- a/runtime/gc/space/malloc_space.h
++++ b/runtime/gc/space/malloc_space.h
+@@ -143,6 +143,14 @@ class MallocSpace : public ContinuousMemMapAllocSpace {
+     can_move_objects_ = false;
+   }
+ 
++  // jiacheng start
++  void CopyForegroundToMarked() REQUIRES(Locks::heap_bitmap_lock_);
++
++  void CopyMarkedToForeground() REQUIRES(Locks::heap_bitmap_lock_);
++
++  void Debug();
++  // jiacheng end
++
+  protected:
+   MallocSpace(const std::string& name,
+               MemMap&& mem_map,
+diff --git a/runtime/gc/space/region_space-inl.h b/runtime/gc/space/region_space-inl.h
+index 215458b1a0..1e51b8f995 100644
+--- a/runtime/gc/space/region_space-inl.h
++++ b/runtime/gc/space/region_space-inl.h
+@@ -24,6 +24,11 @@
+ #include "region_space.h"
+ #include "thread-current-inl.h"
+ 
++// jiacheng start
++#include "jiacheng_utils.h"
++#include "jiacheng_hack.h"
++// jiacheng end
++
+ namespace art {
+ namespace gc {
+ namespace space {
+@@ -151,18 +156,6 @@ inline uint64_t RegionSpace::GetBytesAllocatedInternal() {
+           bytes += r->BytesAllocated();
+         }
+         break;
+-      // jiacheng start
+-      case RegionType::kRegionTypeColdToSpace:
+-        if (r->IsInColdToSpace()) {
+-          bytes += r->BytesAllocated();
+-        }
+-        break;
+-      case RegionType::kRegionTypeColdSpace:
+-        if (r->IsInToSpace()) {
+-          bytes += r->BytesAllocated();
+-        }
+-        break;
+-      // jiacheng end
+       default:
+         LOG(FATAL) << "Unexpected space type : " << kRegionType;
+     }
+@@ -198,18 +191,6 @@ inline uint64_t RegionSpace::GetObjectsAllocatedInternal() {
+           bytes += r->ObjectsAllocated();
+         }
+         break;
+-      // jiacheng start
+-      case RegionType::kRegionTypeColdToSpace:
+-        if (r->IsInColdToSpace()) {
+-          bytes += r->ObjectsAllocated();
+-        }
+-        break;
+-      case RegionType::kRegionTypeColdSpace:
+-        if (r->IsInToSpace()) {
+-          bytes += r->ObjectsAllocated();
+-        }
+-        break;
+-      // jiacheng end
+       default:
+         LOG(FATAL) << "Unexpected space type : " << kRegionType;
+     }
+diff --git a/runtime/gc/space/region_space.cc b/runtime/gc/space/region_space.cc
+index c8d97b77da..1b7c06c840 100644
+--- a/runtime/gc/space/region_space.cc
++++ b/runtime/gc/space/region_space.cc
+@@ -121,12 +121,13 @@ RegionSpace::RegionSpace(const std::string& name, MemMap&& mem_map, bool use_gen
+       max_peak_num_non_free_regions_(0U),
+       non_free_region_index_limit_(0U),
+       current_region_(&full_region_),
+-      evac_region_(nullptr),
+       // jiacheng start
+-      // cyclic_alloc_region_index_(0U) {
+-      cyclic_alloc_region_index_(0U),
+-      current_cold_region_(nullptr) {
+-      // jiacheng end
++      current_launch_region_(&full_region_),
++      current_hot_region_(&full_region_),
++      current_cold_region_(&full_region_),
++      // jiachen end
++      evac_region_(nullptr),
++      cyclic_alloc_region_index_(0U) {
+   CHECK_ALIGNED(mem_map_.Size(), kRegionSize);
+   CHECK_ALIGNED(mem_map_.Begin(), kRegionSize);
+   DCHECK_GT(num_regions_, 0U);
+@@ -137,6 +138,10 @@ RegionSpace::RegionSpace(const std::string& name, MemMap&& mem_map, bool use_gen
+   }
+   mark_bitmap_.reset(
+       accounting::ContinuousSpaceBitmap::Create("region space live bitmap", Begin(), Capacity()));
++  // jiacheng start
++  foreground_live_bitmap_.reset(
++    accounting::ContinuousSpaceBitmap::Create("region space foreground live bitmap", Begin(), Capacity()));
++  // jiacheng end
+   if (kIsDebugBuild) {
+     CHECK_EQ(regions_[0].Begin(), Begin());
+     for (size_t i = 0; i < num_regions_; ++i) {
+@@ -296,6 +301,18 @@ inline bool RegionSpace::Region::ShouldBeEvacuated(EvacMode evac_mode) {
+       result = false;
+     }
+   }
++  // jiacheng start
++  else if (evac_mode == kEvacModeBackgroundGen) {
++    bool foreground_region = hotness_ == jiacheng::HOTNESS_LAUNCH || 
++                             hotness_ == jiacheng::HOTNESS_COLD ||
++                             hotness_ == jiacheng::HOTNESS_WORKING_SET;
++    if (foreground_region) {
++      result = false;
++    } else {
++      return true;
++    }
++  }
++  // jiacheng end
+   return result;
+ }
+ 
+@@ -339,14 +356,6 @@ void RegionSpace::ZeroLiveBytesForLargeObject(mirror::Object* obj) {
+ void RegionSpace::SetFromSpace(accounting::ReadBarrierTable* rb_table,
+                                EvacMode evac_mode,
+                                bool clear_live_bytes) {
+-  // jiacheng start
+-  // if (jiacheng::IsWhiteApp()) {
+-  //   LOG(INFO) << "jiacheng region_space.cc 343 RegionSpace::SetFromSpace()"
+-  //             << " evac_mode= " << evac_mode
+-  //             << " clear_live_bytes= " << clear_live_bytes;
+-  // }
+-  // jiacheng end
+-  
+   // Live bytes are only preserved (i.e. not cleared) during sticky-bit CC collections.
+   DCHECK(use_generational_cc_ || clear_live_bytes);
+   ++time_;
+@@ -369,44 +378,22 @@ void RegionSpace::SetFromSpace(accounting::ReadBarrierTable* rb_table,
+     RegionState state = r->State();
+     RegionType type = r->Type();
+     if (!r->IsFree()) {
+-      // jiacheng start
+-      // DCHECK(r->IsInToSpace());
+-      CHECK(r->IsInToSpace() || r->IsInColdToSpace());
+-      // jiacheng end
++      DCHECK(r->IsInToSpace());
+       if (LIKELY(num_expected_large_tails == 0U)) {
+-        // jiacheng start
+-        // DCHECK((state == RegionState::kRegionStateAllocated ||
+-        //         state == RegionState::kRegionStateLarge) &&
+-        //        type == RegionType::kRegionTypeToSpace);
+-        CHECK((state == RegionState::kRegionStateAllocated ||
++        DCHECK((state == RegionState::kRegionStateAllocated ||
+                 state == RegionState::kRegionStateLarge) &&
+-               type == RegionType::kRegionTypeToSpace || type == RegionType::kRegionTypeColdToSpace);
+-        // jiacheng end
++               type == RegionType::kRegionTypeToSpace);
+         bool should_evacuate = r->ShouldBeEvacuated(evac_mode);
+         bool is_newly_allocated = r->IsNewlyAllocated();
+-        // jiacheng start
+-        bool should_cold = (type == RegionType::kRegionTypeColdToSpace);
+-        // if (should_evacuate) {
+-        if (should_cold) {
+-          r->SetAsColdSpace();
+-        } else if (should_evacuate) {
+-        // jiacheng end
+-          r->SetAsFromSpace();
+-
+-          // jiacheng start
+-          // if (jiacheng::IsWhiteApp()) {
+-          //   LOG(INFO) << "jiacheng region_space.cc 393 RegionSpace::SetFromSpace() SetAsFromSpace()"
+-          //             << " r->IsNewlyAllocated()= " << r->IsNewlyAllocated()
+-          //             << " evac_mode= " << evac_mode
+-          //             << " region_index= Region[" << r->Idx() << ']';
+-          // }
+-          // jiacheng end
+ 
++        if (should_evacuate) {
++          r->SetAsFromSpace();
+           DCHECK(r->IsInFromSpace());
+         } else {
+           r->SetAsUnevacFromSpace(clear_live_bytes);
+           DCHECK(r->IsInUnevacFromSpace());
+         }
++
+         if (UNLIKELY(state == RegionState::kRegionStateLarge &&
+                      type == RegionType::kRegionTypeToSpace)) {
+           prev_large_evacuated = should_evacuate;
+@@ -446,10 +433,12 @@ void RegionSpace::SetFromSpace(accounting::ReadBarrierTable* rb_table,
+   }
+   DCHECK_EQ(num_expected_large_tails, 0U);
+   current_region_ = &full_region_;
+-  evac_region_ = &full_region_;
+   // jiacheng start
++  current_launch_region_ = &full_region_;
++  current_hot_region_ = &full_region_;
+   current_cold_region_ = &full_region_;
+   // jiacheng end
++  evac_region_ = &full_region_;
+ }
+ 
+ static void ZeroAndProtectRegion(uint8_t* begin, uint8_t* end) {
+@@ -596,19 +585,11 @@ void RegionSpace::ClearFromSpace(/* out */ uint64_t* cleared_bytes,
+         size_t regions_to_clear_bitmap = 1;
+         while (i + regions_to_clear_bitmap < num_regions_) {
+           Region* const cur = &regions_[i + regions_to_clear_bitmap];
+-          // jiacheng start
+-          // if (!cur->AllAllocatedBytesAreLive()) {
+-          //   DCHECK(!cur->IsLargeTail());
+-          //   break;
+-          // }
+-          // CHECK(cur->IsInUnevacFromSpace());
+-
+-          if (!cur->AllAllocatedBytesAreLive() || cur->IsInColdSpace() || cur->IsInColdToSpace()) {
+-            DCHECK(!cur->IsLargeTail()) << (cur->Type());
++          if (!cur->AllAllocatedBytesAreLive()) {
++            DCHECK(!cur->IsLargeTail());
+             break;
+           }
+-          CHECK(cur->IsInUnevacFromSpace()) << (cur->Type());
+-          // jiacheng end
++          CHECK(cur->IsInUnevacFromSpace());
+           cur->SetUnevacFromSpaceAsToSpace();
+           ++regions_to_clear_bitmap;
+         }
+@@ -665,33 +646,6 @@ void RegionSpace::ClearFromSpace(/* out */ uint64_t* cleared_bytes,
+         }
+       }
+     }
+-    // jiacheng start
+-    else if (r->IsInColdSpace()) {
+-      // if (r->LiveBytes() == 0) {
+-      //   DCHECK(!r->IsLargeTail());
+-      //   *cleared_bytes += r->BytesAllocated();
+-      //   *cleared_objects += r->ObjectsAllocated();
+-      //   r->Clear(/*zero_and_release_pages=*/false);
+-      //   size_t free_regions = 1;
+-      //   // Also release RAM for large tails.
+-      //   while (i + free_regions < num_regions_ && regions_[i + free_regions].IsLargeTail()) {
+-      //     regions_[i + free_regions].Clear(/*zero_and_release_pages=*/false);
+-      //     ++free_regions;
+-      //   }
+-      //   num_non_free_regions_ -= free_regions;
+-      //   // When clear_bitmap is true, this clearing of bitmap is taken care in
+-      //   // clear_region().
+-      //   if (!clear_bitmap) {
+-      //     GetLiveBitmap()->ClearRange(
+-      //         reinterpret_cast<mirror::Object*>(r->Begin()),
+-      //         reinterpret_cast<mirror::Object*>(r->Begin() + free_regions * kRegionSize));
+-      //   }
+-      //   continue;
+-      // }
+-      r->SetColdSpaceAsColdToSpace();
+-      // r->SetColdSpaceAsToSpace();
+-    }
+-    // jiacheng end
+     // Note r != last_checked_region if r->IsInUnevacFromSpace() was true above.
+     Region* last_checked_region = &regions_[i];
+     if (!last_checked_region->IsFree()) {
+@@ -704,9 +658,6 @@ void RegionSpace::ClearFromSpace(/* out */ uint64_t* cleared_bytes,
+   evac_region_ = nullptr;
+   num_non_free_regions_ += num_evac_regions_;
+   num_evac_regions_ = 0;
+-  // jiacheng start
+-  current_cold_region_ = nullptr;
+-  // jiacheng end
+ }
+ 
+ void RegionSpace::CheckLiveBytesAgainstRegionBitmap(Region* r) {
+@@ -847,10 +798,12 @@ void RegionSpace::Clear() {
+   SetNonFreeRegionLimit(0);
+   DCHECK_EQ(num_non_free_regions_, 0u);
+   current_region_ = &full_region_;
+-  evac_region_ = &full_region_;
+   // jiacheng start
++  current_launch_region_ = &full_region_;
++  current_hot_region_ = &full_region_;
+   current_cold_region_ = &full_region_;
+   // jiacheng end
++  evac_region_ = &full_region_;
+ }
+ 
+ void RegionSpace::Protect() {
+@@ -1049,15 +1002,6 @@ size_t RegionSpace::AllocationSizeNonvirtual(mirror::Object* obj, size_t* usable
+ }
+ 
+ void RegionSpace::Region::Clear(bool zero_and_release_pages) {
+-  // jiacheng start
+-  // if (jiacheng::IsWhiteApp()) {
+-  //   LOG(INFO) << "jiacheng region_space.cc 1047 Region::Clear()"
+-  //             << " zero_and_release_pages= " << zero_and_release_pages
+-  //             << " region_index= Region[" << Idx() << ']'
+-  //             << " region_type= " << type_;
+-  // }
+-  // jiacheng end
+-
+   top_.store(begin_, std::memory_order_relaxed);
+   state_ = RegionState::kRegionStateFree;
+   type_ = RegionType::kRegionTypeNone;
+@@ -1072,7 +1016,7 @@ void RegionSpace::Region::Clear(bool zero_and_release_pages) {
+   thread_ = nullptr;
+ 
+   // jiacheng start
+-  remembered_set_.clear();
++  hotness_ = 0;
+   // jiacheng end
+ }
+ 
+@@ -1107,13 +1051,6 @@ RegionSpace::Region* RegionSpace::AllocateRegion(bool for_evac) {
+         // following the one that was just allocated.
+         cyclic_alloc_region_index_ = (region_index + 1) % num_regions_;
+       }
+-      // jiacheng start
+-      // if (jiacheng::IsWhiteApp()) {
+-      //   LOG(INFO) << "jiacheng region_space.cc 1083 RegionSpace::AllocateRegion() "
+-      //             << " for_evac= " << for_evac
+-      //             << " region_index= Region[" << r->Idx() << ']';
+-      // }
+-      // jiacheng end
+       return r;
+     }
+   }
+@@ -1147,290 +1084,190 @@ void RegionSpace::Region::UnfreeLargeTail(RegionSpace* region_space, uint32_t al
+ 
+ // jiacheng start
+ 
+-class ColdRefVisitor {
+- public:
+-  explicit ColdRefVisitor(RegionSpace::Region* region): region_(region) {}
+-
+-  void operator()(mirror::Object* obj, MemberOffset offset, bool is_static ATTRIBUTE_UNUSED) const 
+-    REQUIRES_SHARED(Locks::mutator_lock_)
+-    REQUIRES_SHARED(Locks::heap_bitmap_lock_) ALWAYS_INLINE{
+-    mirror::Object* ref = obj->GetFieldObject<mirror::Object, kVerifyNone, kWithoutReadBarrier, false>(offset);
+-    if (!region_->Contains(ref)) {
+-      region_->AddRememberedSet(reinterpret_cast<uint8_t*>(ref));
+-    }
+-  }
+-
+-  void operator()(ObjPtr<mirror::Class> klass, ObjPtr<mirror::Reference> obj) const
+-      REQUIRES_SHARED(Locks::mutator_lock_) ALWAYS_INLINE {
+-    CHECK(klass->IsTypeOfReferenceClass());
+-    mirror::Object* ref = obj->GetReferent();
+-    if (!region_->Contains(ref)) {
+-      region_->AddRememberedSet(reinterpret_cast<uint8_t*>(ref));
+-    }
+-  }
+-
+-  void VisitRootIfNonNull(mirror::CompressedReference<mirror::Object>* root) const
+-      ALWAYS_INLINE
+-      REQUIRES_SHARED(Locks::mutator_lock_) {
+-    if (!root->IsNull()) {
+-      VisitRoot(root);
+-    }
+-  }
+-
+-  void VisitRoot(mirror::CompressedReference<mirror::Object>* root) const
+-      ALWAYS_INLINE
+-      REQUIRES_SHARED(Locks::mutator_lock_) {
+-    mirror::Object* ref = root->AsMirrorPtr();
+-    if (!region_->Contains(ref)) {
+-      region_->AddRememberedSet(reinterpret_cast<uint8_t*>(ref));
+-    }
+-  }
+-
+- private:
+-  RegionSpace::Region* region_;
+-};
+-
+-class ColdWriteBackRefVisitor {
+- public:
+-  explicit ColdWriteBackRefVisitor(RegionSpace::Region* region): region_(region) {}
+-
+-  void operator()(mirror::Object* obj, MemberOffset offset, bool is_static ATTRIBUTE_UNUSED) const 
+-    REQUIRES_SHARED(Locks::mutator_lock_)
+-    REQUIRES_SHARED(Locks::heap_bitmap_lock_) ALWAYS_INLINE {
+-    mirror::Object* ref = obj->GetFieldObject<mirror::Object, kVerifyNone, kWithoutReadBarrier, false>(offset);
+-    mirror::Object* value = reinterpret_cast<mirror::Object*>(region_->GetRememberedSetValue(reinterpret_cast<uint8_t*>(ref)));
+-    if (ref != value) {
+-      obj->SetFieldObject<false>(offset, value);
+-    }
+-  }
+-
+-  void operator()(ObjPtr<mirror::Class> klass, ObjPtr<mirror::Reference> obj) const
+-      REQUIRES_SHARED(Locks::mutator_lock_) ALWAYS_INLINE {
+-    CHECK(klass->IsTypeOfReferenceClass());
+-    mirror::Object* ref = obj->GetReferent();
+-    mirror::Object* value = reinterpret_cast<mirror::Object*>(region_->GetRememberedSetValue(reinterpret_cast<uint8_t*>(ref)));
+-    if (ref != value) {
+-      LOG(INFO) << "jiacheng region_space.cc 1172 ref != value";
+-      // obj->SetFieldObject<false>(offset, value);
+-    }
+-  }
+-
+-  void VisitRootIfNonNull(mirror::CompressedReference<mirror::Object>* root) const
+-      ALWAYS_INLINE
+-      REQUIRES_SHARED(Locks::mutator_lock_) {
+-    if (!root->IsNull()) {
+-      VisitRoot(root);
+-    }
+-  }
+-
+-  void VisitRoot(mirror::CompressedReference<mirror::Object>* root) const
+-      ALWAYS_INLINE
+-      REQUIRES_SHARED(Locks::mutator_lock_) {
+-    mirror::Object* ref = root->AsMirrorPtr();
+-    mirror::Object* value = reinterpret_cast<mirror::Object*>(region_->GetRememberedSetValue(reinterpret_cast<uint8_t*>(ref)));
+-    if (ref != value) {
+-      LOG(INFO) << "jiacheng region_space.cc 1191 ref != value";
+-      // obj->SetFieldObject<false>(offset, value);
+-    }
+-  }
+-
+- private:
+-  RegionSpace::Region* region_;
+-};
+-
+-void RegionSpace::Region::InitRememberedSet() {
+-  remembered_set_.clear();
+-  if (IsFree()) {
+-    return;
+-  }
+-  CHECK(!IsLarge() && !IsLargeTail());
+-  ColdRefVisitor ref_visitor(this);
+-  auto obj_visitor = [&](mirror::Object* obj) REQUIRES_SHARED(Locks::mutator_lock_) {
+-    obj->VisitReferences<true, kVerifyNone, kWithoutReadBarrier>(ref_visitor, ref_visitor);
+-  };
+-  space::RegionSpace* region_space = art::Runtime::Current()->GetHeap()->GetRegionSpace();
+-  region_space->WalkNonLargeRegion(obj_visitor, this);
+-
++void RegionSpace::Region::Debug() {
++  LOG(INFO) << "jiacheng Region::Debug()"
++            << " idx_= " <<  idx_
++            << " live_bytes_= " <<  live_bytes_
++            << " thread_= " <<  thread_
++            << " objects_allocated_= " <<  objects_allocated_.load()
++            << " alloc_time_= " <<  alloc_time_
++            << " is_newly_allocated_= " <<  is_newly_allocated_
++            << " is_a_tlab_= " <<  is_a_tlab_
++            << " state_= " <<  state_
++            << " type_= " <<  type_
++            << " hotness_= " <<  hotness_
++            ;
+ }
+ 
+-
+-void RegionSpace::Region::WriteBackRememberedSet() {
+-  if (IsFree()) {
+-    return;
+-  }
+-  CHECK(!IsLarge() && !IsLargeTail());
+-  // jiacheng start
+-  LOG(INFO) << "jiacheng debug region_space.cc 1264 WriteBackRememberedSet()";
+-  // jiacheng end
+-  ColdWriteBackRefVisitor ref_visitor(this);
+-  auto obj_visitor = [&](mirror::Object* obj) REQUIRES_SHARED(Locks::mutator_lock_) {
+-    obj->VisitReferences<true, kVerifyNone, kWithoutReadBarrier>(ref_visitor, ref_visitor);
+-  };
+-  space::RegionSpace* region_space = art::Runtime::Current()->GetHeap()->GetRegionSpace();
+-  region_space->WalkNonLargeRegion(obj_visitor, this);
+-  remembered_set_.clear();
+-}
+-
+-
+-void RegionSpace::Region::AddRememberedSet(uint8_t* ref) {
+-  remembered_set_[ref] = ref;
+-}
+-
+-uint8_t* RegionSpace::Region::GetRememberedSetValue(uint8_t* ref) {
+-  auto it = remembered_set_.find(ref);
+-  if (it == remembered_set_.end()) {
+-    return nullptr;
+-  }
+-  return it->second;
+-}
+-
+-std::map<uint8_t*, uint8_t*>* RegionSpace::Region::GetRememberedSet() {
+-  return &remembered_set_;
+-}
+-
+-
+-void RegionSpace::Region::UnfreeCold(RegionSpace* region_space, uint32_t alloc_time) {
+-  DCHECK(IsFree());
+-  alloc_time_ = alloc_time;
+-  region_space->AdjustNonFreeRegionLimit(idx_);
+-  type_ = RegionType::kRegionTypeColdToSpace;
+-  if (kProtectClearedRegions) {
+-    CheckedCall(mprotect, __FUNCTION__, Begin(), kRegionSize, PROT_READ | PROT_WRITE);
+-  }
+-  state_ = RegionState::kRegionStateAllocated;
+-}
+-
+-void RegionSpace::JiachengDebug() {
++void RegionSpace::Debug() {
++  uint32_t new_region_num = 0;
++  uint32_t launch_region_num = 0;
++  uint32_t working_set_region_num = 0;
++  uint32_t cold_region_num = 0;
++  uint32_t none_region_num = 0;
+   MutexLock mu(Thread::Current(), region_lock_);
+   for (size_t i = 0; i < std::min(num_regions_, non_free_region_index_limit_); ++i) {
+     Region* r = &regions_[i];
+-    std::map<uint8_t*, uint8_t*>* remembered_set = r->GetRememberedSet();
+-
+-    std::stringstream ss;
+-    ss << "jiacheng region_space.cc 60 JiachengDebug() ";
+-    ss <<  " remembered_set.size()= " << remembered_set->size() << ' ';
+-    // for (auto it : *remembered_set) {
+-    //   ss << " key= " << it.first << " value= " << it.second;
+-    // }
+-    // r->Dump(ss);
+-    LOG(INFO) << ss.str();
++    if (r->Type() == RegionType::kRegionTypeNone) {
++      continue;
++    }
++    int32_t hotness = r->GetHotness();
++    if (r->IsNewlyAllocated()) {
++      ++new_region_num;
++    } else if (hotness == jiacheng::HOTNESS_LAUNCH) {
++      ++launch_region_num;
++    } else if (hotness == jiacheng::HOTNESS_WORKING_SET) {
++      ++working_set_region_num;
++    } else if (hotness == jiacheng::HOTNESS_COLD) {
++      ++cold_region_num;
++    } else {
++      ++none_region_num;
++    }
+   }
++  LOG(INFO) << "jiacheng RegionSpace::Debug()"
++            << " Begin()= " << reinterpret_cast<void*>(Begin())
++            << " End()= " << reinterpret_cast<void*>(End())
++            << " launch_region_num= " << launch_region_num
++            << " working_set_region_num= " << working_set_region_num
++            << " cold_region_num= " << cold_region_num
++            << " none_region_num= " << none_region_num
++            << " new_region_num= " << new_region_num
++            ;
+ }
+ 
+-uint32_t RegionSpace::SwapOutCold() {
+-  size_t swap_out_num = 0;
++
++uint64_t RegionSpace::Madvise() {
++  uint64_t swap_out_size = 0;
+   uint8_t* begin, * end;
+-  size_t swap_out_length;
++  size_t length;
+   MutexLock mu(Thread::Current(), region_lock_);
+   for (size_t i = 0; i < std::min(num_regions_, non_free_region_index_limit_); ++i) {
+     Region* r = &regions_[i];
+-    if (r->IsInColdToSpace() || r->IsInColdSpace()) {
+-      begin = r->Begin();
+-      // end = r->End();
+-      end = r->Top();
+-      swap_out_length = std::distance(begin, end);
+-      jiacheng::SwapOutRange(begin, swap_out_length);
+-      // 防止重新换入
+-      CheckedCall(mprotect, __FUNCTION__, begin, swap_out_length, PROT_READ);
+-      ++swap_out_num;
++    if (r->Type() != RegionType::kRegionTypeNone && !r->IsNewlyAllocated()) {
++      if (r->GetHotness() == jiacheng::HOTNESS_COLD) {
++        begin = r->Begin();
++        // end = r->Top();
++        end = r->End();
++        length = std::distance(begin, end);
++        // Change the permission of the region into READ ONLY
++        // So as to we can know the swap in of the region through handling page fault
++        // if (jiacheng::ColdRange(begin, length) && 
++        //     mprotect(begin, length, PROT_READ) == 0) {
++        
++        if (jiacheng::ColdRange(begin, length)) {
++          swap_out_size += length;
++        }
++      } else if (r->GetHotness() == jiacheng::HOTNESS_LAUNCH) {
++        jiacheng::HotRange(begin, length);
++      }
+     }
+   }
+-  LOG(INFO) << "jiacheng region_space.cc 1336 RegionSpace::SwapOutCold() num_regions= " << swap_out_num;
+-  return swap_out_num * kRegionSize;
++  LOG(INFO) << "jiacheng RegionSpace::Madvise()"
++            << " size(mb)= " << float(swap_out_size)/MB;
++  return swap_out_size;
+ }
+ 
+-bool RegionSpace::HandleFault(mirror::Object* ref) {
+-  Region* r = RefToRegionUnlocked(ref);
+-  // if (r->IsInColdSpace() || r->IsInColdToSpace()) {
+-  uint8_t* begin = r->Begin();
+-  // uint8_t* end = r->Top();
+-  uint8_t* end = r->End();
+-  size_t length = std::distance(begin, end);
+-  if (mprotect(begin, length, PROT_READ | PROT_WRITE) == 0) { // maybe STW
+-    // change cold region to normal region
+-    r->SetAsToSpace();
+-    // r->WriteBackRememberedSet(); 
+-    LOG(INFO) << "jiacheng region_space.cc 1324 HandleFault() set PROT_READ | PROT_WRITE"
+-              << " ref= " << ref
+-              << " begin= " << reinterpret_cast<mirror::Object*>(begin)
+-              << " end= " << reinterpret_cast<mirror::Object*>(end)
+-              << " length= " << length
+-              << " Success!"
+-              ;
+-    return true;
+-  } else {
+-    LOG(INFO) << "jiacheng region_space.cc 1324 HandleFault() set PROT_READ | PROT_WRITE"
+-              << " ref= " << ref
+-              << " begin= " << reinterpret_cast<mirror::Object*>(begin)
+-              << " end= " << reinterpret_cast<mirror::Object*>(end)
+-              << " length= " << length
+-              << " errno= " << errno
+-              << " fail!"
+-              ;
+-    return false;
++bool RegionSpace::HandleFault(mirror::Object* obj) {
++  CHECK(Contains(obj));
++  bool result = false;
++  Region* r = RefToRegionUnlocked(obj);
++  if (r->GetHotness() < 0) {
++    uint8_t* begin = r->Begin();
++    // uint8_t* end = r->Top();
++    uint8_t* end = r->End();
++    size_t length = std::distance(begin, end);
++    if (mprotect(begin, length, PROT_READ | PROT_WRITE) == 0) {
++      r->SetHotness(jiacheng::HOTNESS_NONE);
++      result = true;
++      LOG(INFO) << " jiacheng RegionSpace::HandleFault()" 
++                << " idx_= " << r->Idx()
++                << " length= " << length
++                << " obj= " << obj
++                ;
++    }
+   }
+-  // }
+-  // return false;
++  return result;
+ }
+ 
+ 
+-RegionSpace::Region* RegionSpace::AllocateColdRegion() {
+-  for (size_t i = 0; i < num_regions_; ++i) {
+-    // When using the cyclic region allocation strategy, try to
+-    // allocate a region starting from the last cyclic allocated
+-    // region marker. Otherwise, try to allocate a region starting
+-    // from the beginning of the region space.
+-    size_t region_index = kCyclicRegionAllocation
+-        ? ((cyclic_alloc_region_index_ + i) % num_regions_)
+-        : i;
+-    Region* r = &regions_[region_index];
+-    if (r->IsFree()) {
+-      r->UnfreeCold(this, time_);
+-      ++num_non_free_regions_;
+-      if (kCyclicRegionAllocation) {
+-        // Move the cyclic allocation region marker to the region
+-        // following the one that was just allocated.
+-        cyclic_alloc_region_index_ = (region_index + 1) % num_regions_;
+-      }
+-      // LOG(INFO) << "jiacheng region_space.cc 1322 RegionSpace::AllocateColdRegion()"
+-      //           << " region_index= Region[" << r->Idx() << ']';
+-      return r;
++mirror::Object* RegionSpace::AllocLaunch(size_t num_bytes,
++                                         /* out */ size_t* bytes_allocated,
++                                         /* out */ size_t* usable_size,
++                                         /* out */ size_t* bytes_tl_bulk_allocated) {
++  DCHECK_ALIGNED(num_bytes, kAlignment);
++  mirror::Object* obj = nullptr;
++  if (LIKELY(num_bytes <= kRegionSize)) {
++    obj = current_launch_region_->Alloc(num_bytes, bytes_allocated, usable_size, bytes_tl_bulk_allocated);
++    if (LIKELY(obj != nullptr)) {
++      return obj;
+     }
++    MutexLock mu(Thread::Current(), region_lock_);
++    obj = current_launch_region_->Alloc(num_bytes, bytes_allocated, usable_size, bytes_tl_bulk_allocated);
++    if (LIKELY(obj != nullptr)) {
++      return obj;
++    }
++    Region* r = AllocateRegion(/* for_evac */ true);
++    if (LIKELY(r != nullptr)) {
++      obj = r->Alloc(num_bytes, bytes_allocated, usable_size, bytes_tl_bulk_allocated);
++      CHECK(obj != nullptr);
++      r->SetHotness(jiacheng::HOTNESS_LAUNCH);
++      current_launch_region_ = r;
++      return obj;
++    }
++  } else {
++    // If object is large, just set as normal object
++    // CHECK(false);
++    return nullptr;
+   }
++  return obj;
++}
++
++mirror::Object* RegionSpace::AllocLargeLaunch(size_t num_bytes,
++                                              /* out */ size_t* bytes_allocated,
++                                              /* out */ size_t* usable_size,
++                                              /* out */ size_t* bytes_tl_bulk_allocated) {
++  (void)num_bytes;
++  (void)bytes_allocated;
++  (void)usable_size;
++  (void)bytes_tl_bulk_allocated;
++  CHECK(false) << "RegionSpace::AllocLargeLaunch()";
+   return nullptr;
+ }
+ 
+ 
+-mirror::Object* RegionSpace::AllocCold(size_t num_bytes,
++mirror::Object* RegionSpace::AllocWorkingSet(size_t num_bytes,
+                           /* out */ size_t* bytes_allocated,
+                           /* out */ size_t* usable_size,
+                           /* out */ size_t* bytes_tl_bulk_allocated) {
+   DCHECK_ALIGNED(num_bytes, kAlignment);
+   mirror::Object* obj = nullptr;
+   if (LIKELY(num_bytes <= kRegionSize)) {
+-    obj = current_cold_region_->Alloc(num_bytes, bytes_allocated, usable_size, bytes_tl_bulk_allocated);
++    obj = current_hot_region_->Alloc(num_bytes, bytes_allocated, usable_size, bytes_tl_bulk_allocated);
+     if (LIKELY(obj != nullptr)) {
+       return obj;
+     }
+     MutexLock mu(Thread::Current(), region_lock_);
+-    obj = current_cold_region_->Alloc(num_bytes, bytes_allocated, usable_size, bytes_tl_bulk_allocated);
++    obj = current_hot_region_->Alloc(num_bytes, bytes_allocated, usable_size, bytes_tl_bulk_allocated);
+     if (LIKELY(obj != nullptr)) {
+       return obj;
+     }
+-    Region* r = AllocateColdRegion();
++    Region* r = AllocateRegion(/* for_evac */ true);
+     if (LIKELY(r != nullptr)) {
+       obj = r->Alloc(num_bytes, bytes_allocated, usable_size, bytes_tl_bulk_allocated);
+       CHECK(obj != nullptr);
+-      current_cold_region_ = r;
++      r->SetHotness(jiacheng::HOTNESS_WORKING_SET);
++      current_hot_region_ = r;
+       return obj;
+     }
+   } else {
+-    obj = AllocLargeCold(num_bytes, bytes_allocated, usable_size, bytes_tl_bulk_allocated);
++    // If object is large, just set as normal object
++    // CHECK(false);
++    return nullptr;
+   }
+   return obj;
+ }
+ 
+-mirror::Object* RegionSpace::AllocLargeCold(size_t num_bytes,
++mirror::Object* RegionSpace::AllocLargeWorkingSet(size_t num_bytes,
+                                 /* out */ size_t* bytes_allocated,
+                                 /* out */ size_t* usable_size,
+                                 /* out */ size_t* bytes_tl_bulk_allocated) {
+@@ -1438,33 +1275,65 @@ mirror::Object* RegionSpace::AllocLargeCold(size_t num_bytes,
+   (void)bytes_allocated;
+   (void)usable_size;
+   (void)bytes_tl_bulk_allocated;
++  CHECK(false) << "RegionSpace::AllocLargeWorkingSet()";
+   return nullptr;
+ }
+ 
+-void RegionSpace::InitColdToRegionRememberedSet() {
+-  MutexLock mu(Thread::Current(), region_lock_);
+-  for (size_t i = 0; i < std::min(num_regions_, non_free_region_index_limit_); ++i) {
+-    Region* r = &regions_[i];
+-    if (!r->IsInColdToSpace()) {
+-      continue;
++
++mirror::Object* RegionSpace::AllocCold(size_t num_bytes,
++                                       /* out */ size_t* bytes_allocated,
++                                       /* out */ size_t* usable_size,
++                                       /* out */ size_t* bytes_tl_bulk_allocated) {
++  DCHECK_ALIGNED(num_bytes, kAlignment);
++  mirror::Object* obj = nullptr;
++  if (LIKELY(num_bytes <= kRegionSize)) {
++    obj = current_cold_region_->Alloc(num_bytes, bytes_allocated, usable_size, bytes_tl_bulk_allocated);
++    if (LIKELY(obj != nullptr)) {
++      return obj;
+     }
+-    r->InitRememberedSet();
++    MutexLock mu(Thread::Current(), region_lock_);
++    obj = current_cold_region_->Alloc(num_bytes, bytes_allocated, usable_size, bytes_tl_bulk_allocated);
++    if (LIKELY(obj != nullptr)) {
++      return obj;
++    }
++    Region* r = AllocateRegion(/* for_evac */ true);
++    if (LIKELY(r != nullptr)) {
++      obj = r->Alloc(num_bytes, bytes_allocated, usable_size, bytes_tl_bulk_allocated);
++      CHECK(obj != nullptr);
++      r->SetHotness(jiacheng::HOTNESS_COLD);
++      current_cold_region_ = r;
++      return obj;
++    }
++  } else {
++    // If object is large, just set as normal object
++    // CHECK(false);
++    return nullptr;
+   }
++  return obj;
+ }
+ 
+-void RegionSpace::WriteBackRegionRememberedSet() {
++
++void RegionSpace::ResetHotness() {
+   MutexLock mu(Thread::Current(), region_lock_);
+-  // FIFO because of kCyclicRegionAllocation
+   for (size_t i = 0; i < std::min(num_regions_, non_free_region_index_limit_); ++i) {
+     Region* r = &regions_[i];
+-    if (!r->IsInColdToSpace()) {
+-      continue;
++    if (r->Type() != RegionType::kRegionTypeNone) {
++      r->SetHotness(jiacheng::HOTNESS_NONE);
+     }
+-    r->WriteBackRememberedSet();
+-    break;
+   }
++
+ }
+ 
++
++void RegionSpace::CopyForegroundToMarked() {
++  mark_bitmap_->CopyFrom(foreground_live_bitmap_.get());
++}
++
++void RegionSpace::CopyMarkedToForeground() {
++  foreground_live_bitmap_->CopyFrom(mark_bitmap_.get());
++}
++
++
+ // jiacheng end
+ 
+ }  // namespace space
+diff --git a/runtime/gc/space/region_space.h b/runtime/gc/space/region_space.h
+index 9f5d99eefa..8f74ea0521 100644
+--- a/runtime/gc/space/region_space.h
++++ b/runtime/gc/space/region_space.h
+@@ -47,6 +47,9 @@ class RegionSpace final : public ContinuousMemMapAllocSpace {
+ 
+   enum EvacMode {
+     kEvacModeNewlyAllocated,
++    // jiacheng start
++    kEvacModeBackgroundGen,
++    // jiacheng end
+     kEvacModeLivePercentNewlyAllocated,
+     kEvacModeForceAll,
+   };
+@@ -153,11 +156,6 @@ class RegionSpace final : public ContinuousMemMapAllocSpace {
+     kRegionTypeFromSpace,        // From-space. To be evacuated.
+     kRegionTypeUnevacFromSpace,  // Unevacuated from-space. Not to be evacuated.
+     kRegionTypeToSpace,          // To-space.
+-    // jiacheng start
+-    kRegionTypeColdSpace,
+-    kRegionTypeColdToSpace,
+-    kRegionTypeHotSpace,
+-    // jiacheng end
+     kRegionTypeNone,             // None.
+   };
+ 
+@@ -397,7 +395,7 @@ class RegionSpace final : public ContinuousMemMapAllocSpace {
+           // jiacheng start
+           // type_(RegionType::kRegionTypeToSpace) {}
+           type_(RegionType::kRegionTypeToSpace),
+-          remembered_set_() {}
++          hotness_(0) {}
+           // jiacheng end
+ 
+     void Init(size_t idx, uint8_t* begin, uint8_t* end) {
+@@ -416,7 +414,7 @@ class RegionSpace final : public ContinuousMemMapAllocSpace {
+       DCHECK_LT(begin, end);
+       DCHECK_EQ(static_cast<size_t>(end - begin), kRegionSize);
+       // jiacheng start
+-      remembered_set_.clear();
++      hotness_ = 0;
+       // jiacheng end
+     }
+ 
+@@ -434,24 +432,6 @@ class RegionSpace final : public ContinuousMemMapAllocSpace {
+                                         /* out */ size_t* bytes_allocated,
+                                         /* out */ size_t* usable_size,
+                                         /* out */ size_t* bytes_tl_bulk_allocated);
+-    // jiacheng start
+-    void InitRememberedSet();
+-
+-    void WriteBackRememberedSet();
+-
+-    void AddRememberedSet(uint8_t* ref);
+-
+-    uint8_t* GetRememberedSetValue(uint8_t* ref);
+-
+-    std::map<uint8_t*, uint8_t*>* GetRememberedSet();
+-
+-    template <typename Visitor>
+-    void VisitRegionRememberedObjects(const Visitor& visitor) REQUIRES_SHARED(Locks::mutator_lock_) {
+-      for (auto& x : remembered_set_) {
+-        visitor(reinterpret_cast<mirror::Object*>(x.second));
+-      }
+-    }
+-    // jiacheng end
+ 
+     bool IsFree() const {
+       bool is_free = (state_ == RegionState::kRegionStateFree);
+@@ -467,11 +447,6 @@ class RegionSpace final : public ContinuousMemMapAllocSpace {
+     void Unfree(RegionSpace* region_space, uint32_t alloc_time)
+         REQUIRES(region_space->region_lock_);
+ 
+-    // jiacheng start
+-    void UnfreeCold(RegionSpace* region_space, uint32_t alloc_time)
+-        REQUIRES(region_space->region_lock_);
+-    // jiacheng end
+-
+     // Given a free region, declare it non-free (allocated) and large.
+     void UnfreeLarge(RegionSpace* region_space, uint32_t alloc_time)
+         REQUIRES(region_space->region_lock_);
+@@ -538,20 +513,6 @@ class RegionSpace final : public ContinuousMemMapAllocSpace {
+       return type_ == RegionType::kRegionTypeUnevacFromSpace;
+     }
+ 
+-    // jiacheng start
+-    bool IsInColdSpace() const {
+-      return type_ == RegionType::kRegionTypeColdSpace;
+-    }
+-
+-    bool IsInColdToSpace() const {
+-      return type_ == RegionType::kRegionTypeColdToSpace;
+-    }
+-
+-    bool IsInHotSpace() const {
+-      return type_ == RegionType::kRegionTypeHotSpace;
+-    }
+-    // jiacheng end
+-
+     bool IsInNoSpace() const {
+       return type_ == RegionType::kRegionTypeNone;
+     }
+@@ -590,32 +551,6 @@ class RegionSpace final : public ContinuousMemMapAllocSpace {
+       type_ = RegionType::kRegionTypeToSpace;
+     }
+ 
+-    // jiacheng start
+-    void SetAsToSpace() {
+-      is_newly_allocated_ = false;
+-      type_ = RegionType::kRegionTypeToSpace;
+-    }
+-
+-    void SetAsColdSpace() {
+-      is_newly_allocated_ = false;
+-      type_ = RegionType::kRegionTypeColdSpace;
+-    }
+-
+-    void SetAsColdToSpace() {
+-      type_ = RegionType::kRegionTypeColdToSpace;
+-    }
+-
+-    void SetColdSpaceAsColdToSpace() {
+-      DCHECK(!IsFree() && IsInColdSpace());
+-      type_ = RegionType::kRegionTypeColdToSpace;
+-    }
+-
+-    void SetColdSpaceAsToSpace() {
+-      DCHECK(!IsFree() && IsInColdSpace());
+-      type_ = RegionType::kRegionTypeToSpace;
+-    }
+-    // jiacheng end
+-
+     // Return whether this region should be evacuated. Used by RegionSpace::SetFromSpace.
+     ALWAYS_INLINE bool ShouldBeEvacuated(EvacMode evac_mode);
+ 
+@@ -674,6 +609,18 @@ class RegionSpace final : public ContinuousMemMapAllocSpace {
+ 
+     uint64_t GetLongestConsecutiveFreeBytes() const;
+ 
++    // jiacheng start
++    int32_t GetHotness() {
++      return hotness_;
++    }
++
++    void SetHotness(int32_t hotness) {
++      hotness_ = hotness;
++    }
++
++    void Debug();
++    // jiacheng end
++
+    private:
+     static bool GetUseGenerationalCC();
+ 
+@@ -698,7 +645,7 @@ class RegionSpace final : public ContinuousMemMapAllocSpace {
+     RegionType type_;                   // The region type (see RegionType).
+ 
+     // jiacheng start
+-    std::map<uint8_t*, uint8_t*> remembered_set_;  // TODO: Change to java object so as to process in GC process easily
++    int32_t hotness_; 
+     // jiacheng end
+ 
+     friend class RegionSpace;
+@@ -807,77 +754,45 @@ class RegionSpace final : public ContinuousMemMapAllocSpace {
+ 
+   // jiacheng start
+ public:
+-  bool IsInColdSpace(mirror::Object* ref) {
+-    if (HasAddress(ref)) {
+-      Region* r = RefToRegionUnlocked(ref);
+-      return r->IsInColdSpace();
+-    }
+-    return false;
+-  }
+ 
+-  bool IsInColdToSpace(mirror::Object* ref) {
+-    if (HasAddress(ref)) {
+-      Region* r = RefToRegionUnlocked(ref);
+-      return r->IsInColdToSpace();
+-    }
+-    return false;
+-  }
++  void Debug() REQUIRES(!region_lock_);
++
++  uint64_t Madvise() REQUIRES(!region_lock_);
+ 
+-  void JiachengDebug() REQUIRES(!region_lock_);
++  bool HandleFault(mirror::Object* obj) REQUIRES(!region_lock_);
+ 
+-  uint32_t SwapOutCold() REQUIRES(!region_lock_);
++  mirror::Object* AllocLaunch(size_t num_bytes,
++                              /* out */ size_t* bytes_allocated,
++                              /* out */ size_t* usable_size,
++                              /* out */ size_t* bytes_tl_bulk_allocated) REQUIRES(!region_lock_);
+ 
+-  bool HandleFault(mirror::Object* ref) REQUIRES(!region_lock_);
++  mirror::Object* AllocLargeLaunch(size_t num_bytes,
++                                   /* out */ size_t* bytes_allocated,
++                                   /* out */ size_t* usable_size,
++                                   /* out */ size_t* bytes_tl_bulk_allocated) REQUIRES(!region_lock_);
+ 
+-  Region* AllocateColdRegion() REQUIRES(region_lock_);
++  mirror::Object* AllocWorkingSet(size_t num_bytes,
++                                  /* out */ size_t* bytes_allocated,
++                                  /* out */ size_t* usable_size,
++                                  /* out */ size_t* bytes_tl_bulk_allocated) REQUIRES(!region_lock_);
++
++  mirror::Object* AllocLargeWorkingSet(size_t num_bytes,
++                                       /* out */ size_t* bytes_allocated,
++                                       /* out */ size_t* usable_size,
++                                       /* out */ size_t* bytes_tl_bulk_allocated) REQUIRES(!region_lock_);
+ 
+   mirror::Object* AllocCold(size_t num_bytes,
+                             /* out */ size_t* bytes_allocated,
+                             /* out */ size_t* usable_size,
+                             /* out */ size_t* bytes_tl_bulk_allocated) REQUIRES(!region_lock_);
+ 
+-  mirror::Object* AllocLargeCold(size_t num_bytes,
+-                                /* out */ size_t* bytes_allocated,
+-                                /* out */ size_t* usable_size,
+-                                /* out */ size_t* bytes_tl_bulk_allocated) REQUIRES(!region_lock_);
+ 
+-  void InitColdToRegionRememberedSet() REQUIRES(!region_lock_);
++  void ResetHotness();
+ 
+-  void WriteBackRegionRememberedSet() REQUIRES(!region_lock_);
++  void CopyForegroundToMarked() REQUIRES(Locks::heap_bitmap_lock_);
+ 
+-  template<typename Visitor>
+-  void VisitRememberedObjectsAsRoot(Visitor& visitor) REQUIRES(!region_lock_) REQUIRES_SHARED(Locks::mutator_lock_) {
+-    Thread* self = Thread::Current();
+-    LOG(INFO) << "jiacheng region_space.h 839 VisitRememberedObjectsAsRoot() ";
+-    MutexLock mu(self, region_lock_);
+-    for (size_t i = 0; i < std::min(num_regions_, non_free_region_index_limit_); ++i) {
+-      Region* r = &regions_[i];
+-      if (!r->IsInColdSpace()) {
+-        continue;
+-      }
+-      std::map<uint8_t*, uint8_t*>* remembered_set = r->GetRememberedSet();
+-      for (auto& it : *remembered_set) {
+-        uint8_t** ref = &(it.second);
+-        *ref = reinterpret_cast<uint8_t*>(visitor(reinterpret_cast<mirror::Object*>(*ref)));
+-      }
+-      LOG(INFO) << "jiacheng region_space.h 850 i= " << i;
+-    }
+-  }
++  void CopyMarkedToForeground() REQUIRES(Locks::heap_bitmap_lock_);
+ 
+-  template<typename Visitor>
+-  void VisitRememberedObjects(Visitor& visitor) REQUIRES(!region_lock_) REQUIRES_SHARED(Locks::mutator_lock_) {
+-    Thread* self = Thread::Current();
+-    LOG(INFO) << "jiacheng region_space.h 858 VisitRememberedObjects() ";
+-    MutexLock mu(self, region_lock_);
+-    for (size_t i = 0; i < std::min(num_regions_, non_free_region_index_limit_); ++i) {
+-      Region* r = &regions_[i];
+-      if (!r->IsInColdSpace()) {
+-        continue;
+-      }
+-      r->VisitRegionRememberedObjects(visitor);
+-      LOG(INFO) << "jiacheng region_space.h 866 i= " << i;
+-    }
+-  }
+ private:
+   // jiacheng end
+ 
+@@ -909,9 +824,15 @@ private:
+   size_t non_free_region_index_limit_ GUARDED_BY(region_lock_);
+ 
+   Region* current_region_;         // The region currently used for allocation.
++  // jiacheng start
++  Region* current_launch_region_;  // Objects accessed in hot launch
++  Region* current_hot_region_;    // Objects in the background working set
++  Region* current_cold_region_;  // Objects without GC in the background
++  // jiacheng end
+   Region* evac_region_;            // The region currently used for evacuation.
+   Region full_region_;             // The dummy/sentinel region that looks full.
+ 
++
+   // Index into the region array pointing to the starting region when
+   // trying to allocate a new region. Only used when
+   // `kCyclicRegionAllocation` is true.
+@@ -921,7 +842,7 @@ private:
+   std::unique_ptr<accounting::ContinuousSpaceBitmap> mark_bitmap_;
+ 
+   // jiacheng start
+-  Region* current_cold_region_;
++  std::unique_ptr<accounting::ContinuousSpaceBitmap> foreground_live_bitmap_;
+   // jiacheng end
+ 
+   DISALLOW_COPY_AND_ASSIGN(RegionSpace);
+diff --git a/runtime/gc/space/space.cc b/runtime/gc/space/space.cc
+index e7961eb256..9ecd71e99d 100644
+--- a/runtime/gc/space/space.cc
++++ b/runtime/gc/space/space.cc
+@@ -87,6 +87,12 @@ DiscontinuousSpace::DiscontinuousSpace(const std::string& name,
+   mark_bitmap_.reset(accounting::LargeObjectBitmap::Create("large marked objects", nullptr,
+                                                            capacity));
+   CHECK(mark_bitmap_.get() != nullptr);
++
++  // jiacheng start
++  foreground_live_bitmap_.reset(accounting::LargeObjectBitmap::Create("large foreground objects", nullptr,
++                                                           capacity));
++  CHECK(foreground_live_bitmap_.get() != nullptr);
++  // jiacheng end
+ }
+ 
+ collector::ObjectBytePair ContinuousMemMapAllocSpace::Sweep(bool swap_bitmaps) {
+@@ -144,6 +150,19 @@ AllocSpace::SweepCallbackContext::SweepCallbackContext(bool swap_bitmaps_in, spa
+     : swap_bitmaps(swap_bitmaps_in), space(space_in), self(Thread::Current()) {
+ }
+ 
++
++
++// jiacheng start
++void ContinuousMemMapAllocSpace::DebugBitmap() {
++  LOG(INFO) << "jiacheng ContinuousMemMapAllocSpace::DebugBitmap()"
++            << " GetName()= " << GetName()
++            << " live_bitmap_= " << live_bitmap_.get()
++            << " mark_bitmap_= " << mark_bitmap_.get()
++            << " temp_bitmap_= " << temp_bitmap_.get()
++            ;
++}
++// jiacheng end
++
+ }  // namespace space
+ }  // namespace gc
+ }  // namespace art
+diff --git a/runtime/gc/space/space.h b/runtime/gc/space/space.h
+index 6a4095c09f..6182d7565f 100644
+--- a/runtime/gc/space/space.h
++++ b/runtime/gc/space/space.h
+@@ -364,6 +364,10 @@ class DiscontinuousSpace : public Space {
+   std::unique_ptr<accounting::LargeObjectBitmap> live_bitmap_;
+   std::unique_ptr<accounting::LargeObjectBitmap> mark_bitmap_;
+ 
++  // jiacheng start
++  std::unique_ptr<accounting::LargeObjectBitmap> foreground_live_bitmap_;
++  // jiacheng end
++
+  private:
+   DISALLOW_IMPLICIT_CONSTRUCTORS(DiscontinuousSpace);
+ };
+@@ -450,11 +454,19 @@ class ContinuousMemMapAllocSpace : public MemMapSpace, public AllocSpace {
+   collector::ObjectBytePair Sweep(bool swap_bitmaps);
+   virtual accounting::ContinuousSpaceBitmap::SweepCallback* GetSweepCallback() = 0;
+ 
++  // jiacheng start
++  virtual void DebugBitmap();
++  // jiacheng end
++
+  protected:
+   std::unique_ptr<accounting::ContinuousSpaceBitmap> live_bitmap_;
+   std::unique_ptr<accounting::ContinuousSpaceBitmap> mark_bitmap_;
+   std::unique_ptr<accounting::ContinuousSpaceBitmap> temp_bitmap_;
+ 
++  // jiacheng start
++  std::unique_ptr<accounting::ContinuousSpaceBitmap> foreground_live_bitmap_;
++  // jiacheng end
++
+   ContinuousMemMapAllocSpace(const std::string& name,
+                              MemMap&& mem_map,
+                              uint8_t* begin,
+diff --git a/runtime/jiacheng_barrier.cc b/runtime/jiacheng_barrier.cc
+index 8d544d9ff5..874291950d 100644
+--- a/runtime/jiacheng_barrier.cc
++++ b/runtime/jiacheng_barrier.cc
+@@ -1,35 +1,48 @@
++// jiacheng start
++#include "jiacheng_global.h"
+ #include "jiacheng_barrier.h"
+-#include "jiacheng_profiler.h"
+ #include "jiacheng_utils.h"
+ 
+-#include "mirror/object.h"
++#include "mirror/object-inl.h"
++#include "runtime.h"
++#include "gc/heap.h"
+ 
+ namespace art {
+ namespace jiacheng {
+ 
+ 
+ void JiachengBarrier(uint64_t obj) {
++    if (!ENABLE_ACCESS_BARRIER) return;
++    // (void)obj;
++    // return;
+     if (!obj) {
+         return;
+     }
+-    if (!IsWhiteApp()) {
++    Runtime* runtime = Runtime::Current();
++    if (!runtime->IsStarted()) { 
+         return;
+     }
+-    Profiler* profiler = Profiler::Current();
++    if (!IsWhiteApp()) return;
++
+     mirror::Object* object = reinterpret_cast<mirror::Object*>(obj);
++    gc::Heap* heap = runtime->GetHeap();
++    heap->AddWs(object);
++}
+ 
+-    if (!profiler->GetDuringGcFlag()) {
+-        uint16_t current_time = profiler->GetCurrentTime();
+-        if (profiler->GetPerceptibleFlag()) { // foreground
+-            object->SetForegroundAccessRecord(current_time);
+-        } else {  // background
+-            object->SetBackgroundAccessRecord(current_time);
+-        }
+-        if (profiler->GetSwitchingFlag() && object->GetSwitchAccessRecord()==0) {
+-            object->SetSwitchAccessRecord(current_time);
+-        }
+-    }
++void AllocationNewBarrier(uint64_t obj) {
++    if (!ENABLE_ALLOCATION_BARRIER) return;
++    (void)obj;
++    // mirror::Object* object = reinterpret_cast<mirror::Object*>(obj);
++    // object->SetTargetFlag();
++
++    // #ifdef JIACHENG_DEBUG
++    // object->SetDebugFlag(jiacheng::GenerateID());
++    // #endif
++
++    JiachengBarrier(obj);
+ }
+ 
+ }
+-}
+\ No newline at end of file
++}
++
++// jiacheng end
+\ No newline at end of file
+diff --git a/runtime/jiacheng_barrier.h b/runtime/jiacheng_barrier.h
+index f9250c6c3b..9f09cb0de0 100644
+--- a/runtime/jiacheng_barrier.h
++++ b/runtime/jiacheng_barrier.h
+@@ -1,15 +1,20 @@
++// jiacheng start
++
+ #ifndef ART_RUNTIME_JIACHENG_BARRIER_H_
+ #define ART_RUNTIME_JIACHENG_BARRIER_H_
+ 
+-#include "base/mutex.h"
+-
+ namespace art {
+ namespace jiacheng {
+ 
+ void JiachengBarrier(uint64_t obj);
+ 
++void AllocationNewBarrier(uint64_t obj);
++
+ 
+ } // namespace jiacheng
+ } // namespace art
+ 
+-#endif
+\ No newline at end of file
++#endif
++
++
++// jiacheng end
+\ No newline at end of file
+diff --git a/runtime/jiacheng_bloom_filter.h b/runtime/jiacheng_bloom_filter.h
+index eade861eae..589e714a90 100644
+--- a/runtime/jiacheng_bloom_filter.h
++++ b/runtime/jiacheng_bloom_filter.h
+@@ -1,3 +1,4 @@
++// jiacheng start
+ #ifndef ART_RUNTIME_JIACHENG_BLOOM_FILTER_H_
+ #define ART_RUNTIME_JIACHENG_BLOOM_FILTER_H_
+ 
+@@ -130,4 +131,6 @@ private:
+ } // namespace jiacheng
+ } // namespace art
+ 
+-#endif
+\ No newline at end of file
++#endif
++
++// jiacheng end
+\ No newline at end of file
+diff --git a/runtime/jiacheng_global.h b/runtime/jiacheng_global.h
+new file mode 100644
+index 0000000000..5451e741f7
+--- /dev/null
++++ b/runtime/jiacheng_global.h
+@@ -0,0 +1,41 @@
++// jiacheng start
++
++#ifndef ART_RUNTIME_JIACHENG_GLOBAL_H_
++#define ART_RUNTIME_JIACHENG_GLOBAL_H_
++
++#include "base/globals.h"
++
++namespace art {
++namespace jiacheng {
++
++#define JIACHENG_DEBUG
++
++
++constexpr bool ENABLE_ACCESS_BARRIER = true;
++constexpr bool ENABLE_ALLOCATION_BARRIER = true;
++
++constexpr bool ENABLE_APGC = false;
++constexpr bool ENABLE_NRO = false;
++constexpr bool ENABLE_FYO = false;
++
++constexpr bool ENABLE_BGC = false;
++
++constexpr uint32_t WINDOW_SIZE_HOT_LAUNCH = 5; 
++constexpr uint32_t WINDOW_SIZE_BACKGROUND_WS = 10;
++
++constexpr int32_t NEAR_TO_ROOT_THRESHOLD = 2;
++
++constexpr int32_t HOTNESS_LAUNCH = 9;
++constexpr int32_t HOTNESS_WORKING_SET = 8;
++constexpr int32_t HOTNESS_COLD = -1;
++constexpr int32_t HOTNESS_NONE = 0;
++
++const constexpr uint8_t MADV_COLD_RUNTIME = 233;
++const constexpr uint8_t MADV_HOT_RUNTIME = 234;
++
++} // namespace jiacheng
++} // namespace art
++
++#endif
++
++// jiacheng end
+\ No newline at end of file
+diff --git a/runtime/jiacheng_hack.cc b/runtime/jiacheng_hack.cc
+index b113f59654..21bd9dd6f2 100644
+--- a/runtime/jiacheng_hack.cc
++++ b/runtime/jiacheng_hack.cc
+@@ -1,8 +1,13 @@
++// jiacheng start
+ #include <string>
++#include <chrono>
++#include <thread>
+ 
+ #include "runtime.h"
+ #include "gc/heap.h"
+ #include "gc/space/region_space.h"
++#include "gc/space/dlmalloc_space.h"
++#include "gc/space/large_object_space.h"
+ #include "gc/collector/garbage_collector.h"
+ #include "base/utils.h"
+ #include "mirror/object-inl.h"
+@@ -10,175 +15,58 @@
+ #include <sys/mman.h>
+ 
+ #include "jiacheng_hack.h"
+-#include "jiacheng_activity_manager.h"
+ #include "jiacheng_utils.h"
+-#include "jiacheng_profiler.h"
+-#include "jiacheng_swapper.h"
+ 
+ namespace art{
+ namespace jiacheng {
+ 
+ typedef void(*WalkCallback)(void *start, void *end, size_t num_bytes, void* callback_arg);
+ 
+-bool HandleFault(int sig, siginfo_t* info, void* context) {
+-    (void)context;
++bool HandleFault(int sig ATTRIBUTE_UNUSED, siginfo_t* info, void* context ATTRIBUTE_UNUSED) {
+     if (!IsWhiteApp()) {
+         return false;
+     }
+-    LOG(INFO) << " jiacheng fault_handler.cc HandleFault()" 
+-            << " sig= " << sig
+-            << " info->si_addr= " << reinterpret_cast<mirror::Object*>(info->si_addr)
+-            << " info->si_signo= " << info->si_signo
+-            << " info->si_errno= " << info->si_errno
+-            << " info->si_code= " << info->si_code
+-            ;
+     mirror::Object *ref = reinterpret_cast<mirror::Object *>(info->si_addr);
+-
+-    gc::space::RegionSpace* region_space = Runtime::Current()->GetHeap()->GetRegionSpace();
+-    if (region_space->HasAddress(ref)) {
+-        bool result = region_space->HandleFault(ref);
+-        return result;
+-    } else {
+-        return false;
++    bool result = false;
++    
++    gc::Heap* heap = Runtime::Current()->GetHeap();
++    gc::space::RegionSpace* region_space = heap->GetRegionSpace();
++    gc::space::DlMallocSpace* non_moving_space = reinterpret_cast<gc::space::DlMallocSpace*>(heap->GetNonMovingSpace());
++    gc::space::LargeObjectSpace* large_object_space = heap->GetLargeObjectsSpace();
++
++    if (region_space->Contains(ref)) {
++        result = region_space->HandleFault(ref);
++    } else if (non_moving_space->Contains(ref)) {
++        result = non_moving_space->HandleFault(ref);
++    } else if (large_object_space->Contains(ref)) {
++        result = large_object_space->HandleFault(ref);
+     }
++    return result;
+ }
+ 
+-// 在App启动的main函数中调用该函数
+ void OnAppStart() {
+     if (!IsWhiteApp()) {
+         return;
+     }
+-    LOG(INFO) << "jiacheng jiacheng_hack.cc OnAppStart()"
+-              << " package_name= " << GetCurrentPackageName();
+-    Profiler* profiler = Profiler::Current();
+-    profiler->SetStartTime(art::NanoTime());
+-    (void)profiler;
+-    
+-    Swapper* swapper = Swapper::Current();
+-    (void)swapper;
+-}
+-
+-// AMS通过在系统启动的时候注册的service调用该函数
+-void UpdateActivityState(const char* package_name, const char* activity_name, int state) { 
+-    (void)package_name;
+-    std::string name(activity_name);
+-    ActivityManager::Current()->UpdateActivityState(name, state);
+-}
+-
+-
+-void UpdataAppState(ProcessState old_process_state, ProcessState new_process_state) {
+-    if (!IsWhiteApp()) {
+-        return;
+-    }
+-    Profiler* profiler = Profiler::Current();
+-    uint64_t start_time = profiler->GetStartTime();
+-    if (start_time == 0 || art::NanoTime() - start_time < 1000000000) {
+-        return;
+-    }
+-
+-    std::string package_name = GetCurrentPackageName();
+-    LOG(INFO) << "jiacheng jiacheng_hack.cc 111 UpdataAppState() "
+-              << " package_name= " << package_name 
+-              << " old_process_state= " << old_process_state
+-              << " new_process_state= " << new_process_state
+-              ;
+-
+-    if (new_process_state == kProcessStateJankImperceptible) {
+-        if (profiler->GetPerceptibleFlag()) {
+-            profiler->SetBackgroundTime(profiler->GetCurrentTime());
+-            profiler->ClearPerceptibleFlag();
+-        }
+-    } else {
+-        if (!profiler->GetPerceptibleFlag()) {
+-            profiler->SetSwitchingTime(profiler->GetCurrentTime());
+-            profiler->SetSwitchingFlag();
+-            profiler->SetPerceptibleFlag();
++    LOG(INFO) << "jiacheng OnAppStart()";
++
++    auto func = [](){
++        constexpr uint64_t defer_time = 3;
++        gc::Heap* heap = Runtime::Current()->GetHeap();
++        while (true) {
++            std::this_thread::sleep_for(std::chrono::seconds(defer_time));
++            LOG(INFO) << "jiacheng"
++                    << " MutatorWS= " << heap->GetMutatorWsSize()
++                    << " GcWS= " << heap->GetGcWsSize();
++            heap->ClearMutatorWs();
++            heap->ClearGcWs();
+         }
+-    }
+-
+-}
+-
+-// 每次GC开始的时候，调用该方法
+-void BeforeGarbageCollectorRun(const gc::collector::GarbageCollector* collector) {
+-    if (!IsWhiteApp()) {
+-        return;
+-    }
+-    LOG(INFO) << "jiacheng jiacheng_hack.cc 89 BeforeGarbageCollectorRun()" 
+-              << " NanoTime= " << NanoTime()
+-              << " GarbageCollector.GetName()= " << collector->GetName()
+-              << " GetGcType()= " << collector->GetGcType();
+-
+-    Profiler* profiler = Profiler::Current();
+-    profiler->SetDuringGcFlag();
+-}
+-
+-// 每次GC结束的时候，调用该方法
+-void AfterGarbageCollectorRun(const gc::collector::GarbageCollector* collector) {
+-    if (!IsWhiteApp()) {
+-        return;
+-    }
+-    const gc::collector::Iteration* iteration = collector->GetCurrentIteration();
+-    
+-    LOG(INFO) << "jiacheng jiacheng_hack.cc 106 AfterGarbageCollectorRun()" 
+-              << " NanoTime= " << NanoTime()
+-              << " GcCause= " << iteration->GetGcCause()
+-              << " GetGcType= " << collector->GetGcType();
+-
+-    Profiler* profiler = Profiler::Current();
+-    profiler->IncreaseGcNumber();
+-    profiler->ClearDuringGcFlag();
+-    
+-    profiler->JiachengDebug();
+-
+-    // profiler->ClearAccessWS();
+-    profiler->ClearGcWS();
+-
+-
+-    Runtime::Current()->GetHeap()->GetRegionSpace()->InitColdToRegionRememberedSet();
+-    // jiacheng debug start
+-    // Runtime::Current()->GetHeap()->GetRegionSpace()->JiachengDebug();
+-    // jiacheng debug end
++    };
++    std::thread t(func);
++    t.detach();
+ }
+ 
+-// GC访问内存的时候，调用该方法
+-// 1. Copy过程的from_ref和to_ref
+-// 2. Scan过程
+-void GCAccessTrigger(mirror::Object* obj) {
+-    (void)obj;
+-    // if (!obj) {
+-    //     return;
+-    // }
+-    // if (!IsWhiteApp()) {
+-    //     return;
+-    // }
+-    // Profiler* profiler = Profiler::Current();
+-    // profiler->RecordGcWS(obj);
+-}
+-
+-bool ObjectIsSwappableType(mirror::Object* obj) {
+-    if (obj->IsArrayInstance()) {
+-        return !obj->IsObjectArray();
+-    } else {
+-        return !obj->IsClass() && !obj->IsClassLoader() && !obj->IsDexCache() && !obj->IsString() && !obj->IsReferenceInstance();
+-    }
+-    // return (
+-    //     (obj->IsArrayInstance() && !obj->IsObjectArray())
+-    //     || (!obj->IsArrayInstance() && !obj->IsClass() && !obj->IsClassLoader() && !obj->IsDexCache() && !obj->IsString() && !obj->IsReferenceInstance())
+-    // );
+-}
+-
+-void JiachengDebug() {
+-    // ActivityManager::Current()->JiachengDebug();
+-    LOG(INFO) << "jiacheng jiacheng_hack.cc 177 Debug() "
+-              << "CodeGeneratorARM64::MarkGCCard()";
+-    // Runtime* runtime = Runtime::Current();
+-    // gc::Heap* heap = runtime->GetHeap();
+-
+-
+-    // heap->JiachengDebug();
+-}
+-
+-
+-
+ } // namespace jiacheng
+ } // namespace art
++
++// jiacheng end
+\ No newline at end of file
+diff --git a/runtime/jiacheng_hack.h b/runtime/jiacheng_hack.h
+index c797fe36b2..fb9a9189c2 100644
+--- a/runtime/jiacheng_hack.h
++++ b/runtime/jiacheng_hack.h
+@@ -1,6 +1,9 @@
++// jiacheng start
++
+ #ifndef ART_RUNTIME_JIACHENG_HACK_H_
+ #define ART_RUNTIME_JIACHENG_HACK_H_
+ 
++#include "jiacheng_global.h"
+ #include "process_state.h"
+ #include "signal.h"
+ 
+@@ -22,20 +25,8 @@ bool HandleFault(int sig, siginfo_t* info, void* context);
+ 
+ void OnAppStart();
+ 
+-void UpdateActivityState(const char* package_name, const char* activity_name, int state);
+-
+-void UpdataAppState(ProcessState old_process_state, ProcessState new_process_state);
+-
+-void BeforeGarbageCollectorRun(const gc::collector::GarbageCollector* collector);
+-
+-void AfterGarbageCollectorRun(const gc::collector::GarbageCollector* collector);
+-
+-void GCAccessTrigger(mirror::Object* obj);
+-
+-bool ObjectIsSwappableType(mirror::Object * obj) NO_THREAD_SAFETY_ANALYSIS;
+-
+-void JiachengDebug();
+-
+ } // namespace jiacheng
+ } // namespace art
+-#endif
+\ No newline at end of file
++#endif
++
++// jiacheng end
+\ No newline at end of file
+diff --git a/runtime/jiacheng_utils.cc b/runtime/jiacheng_utils.cc
+index 12c1b669a8..b30637c5bd 100644
+--- a/runtime/jiacheng_utils.cc
++++ b/runtime/jiacheng_utils.cc
+@@ -1,70 +1,64 @@
++// jiacheng start
+ #include <chrono>
+ #include <atomic>
+ #include <set>
+ #include <thread>
+ #include <random>
+ #include <fstream>
++#include <sstream>
+ 
+ #include <unistd.h>
+ #include <sys/mman.h>
+ #include <sys/syscall.h>
++#include <cstdlib>
++
++#include <errno.h>
+ 
+ #include "base/time_utils.h"
+ #include "runtime.h"
++#include "gc/heap-inl.h"
+ 
+ #include "jiacheng_utils.h"
+-#include "jiacheng_profiler.h"
++
++extern char *__progname;
+ 
+ namespace art {
+ namespace jiacheng {
+ 
+-void CurrentThreadSleepNanoSecond(const unsigned long n) {
+-    std::this_thread::sleep_for(std::chrono::nanoseconds(n));
+-}
+ 
+-void CurrentThreadSleepSecond(const unsigned long n) {
+-    std::this_thread::sleep_for(std::chrono::seconds(n));
++uint64_t GenerateID() {
++    static std::atomic<uint64_t> id(1);
++    return id.fetch_add(1, std::memory_order_relaxed);
+ }
+ 
+-// 防止某个操作过于频繁
+-bool CheckHot(uint64_t nano) {
+-    static std::atomic<uint64_t> last_time(0);
+-    uint64_t get_last_time = last_time.load();
+-    uint64_t this_time = art::NanoTime();
+-    if (this_time - get_last_time < nano) {
+-        return true;
+-    } else {
+-        last_time.store(this_time);
+-        return false;
+-    }
+-}
+ 
+-uint32_t GenerateRandomKey() {
+-    static std::random_device rd; // obtain a random number from hardware
+-    static std::mt19937 gen(rd()); // seed the generator
+-    static std::uniform_int_distribution<> distr(0, 1000000000); // define the range
+-    return distr(gen);
+-}
+-
+-// 需要测试的APP: Twitter, Facebook, Youtube, Tiktok, Amazon Shopping,
+-//             Google Map, Chrome, Firefox, Angry Bird, Candy Crush Saga
+ bool IsWhiteApp() {
+     static std::atomic<int> white(0);
+-    static std::set<std::string> white_app_set{
+-        "com.twitter.android", 
+-        "com.facebook.katana", 
+-        "com.google.android.youtube", 
+-        "com.zhiliaoapp.musically",
++    static std::unordered_set<std::string> white_app_set{
++        "com.jiacheng.activitylifecycletest",
++
++        "com.twitter.android",
++        "com.facebook.katana",
++        "com.instagram.android",
++        "org.telegram.messenger",
++        "jp.naver.line.android",
++        
++        "com.google.android.youtube",
++        "com.ss.android.ugc.aweme",
++        "com.spotify.music",
++        "tv.twitch.android.app",
++        "com.wemesh.android",
++        "sg.bigo.live",
++
+         "com.amazon.mShop.android.shopping",
+         "com.google.android.apps.maps",
+         "com.android.chrome",
+         "org.mozilla.firefox",
++        "com.linkedin.android",
++
+         "com.rovio.angrybirds",
+         "com.king.candycrushsaga",
+ 
+-        "com.taobao.taobao", 
+-        "com.jiacheng.activitylifecycletest",
+-
+         "edu.washington.cs.nl35.memorywaster", 
+         "edu.washington.cs.nl35.memorywaster1",
+         "edu.washington.cs.nl35.memorywaster2",
+@@ -95,21 +89,23 @@ bool IsWhiteApp() {
+         "edu.washington.cs.nl35.memorywaster27",
+         "edu.washington.cs.nl35.memorywaster28",
+         "edu.washington.cs.nl35.memorywaster29",
+-        "edu.washington.cs.nl35.memorywaster30"
++        "edu.washington.cs.nl35.memorywaster30",
++
++        "edu.cityu.memorywaster01"
+     };
+-    Runtime* runtime = Runtime::Current();
+-    if (runtime == nullptr || runtime->IsZygote()) { 
+-        return false;
++    
++    // std::string process_name = GetCurrentProcessName();
++    // return white_app_set.find(process_name) != white_app_set.end();
++
++    if (white.load(std::memory_order_relaxed) == 1) {
++        return true;
+     }
+-    if (white.load() == 0) {
+-        std::string package_name = GetCurrentPackageName();
+-        if (white_app_set.find(package_name) != white_app_set.end()) {
+-            white.store(1);
+-        } else if ("" != package_name && "zygote" != package_name && "zygote64" != package_name) {
+-            white.store(-1);
+-        }
++    std::string process_name = GetCurrentProcessName();
++    if(white_app_set.find(process_name) != white_app_set.end()) {
++        white.store(1, std::memory_order_relaxed);
++        return true;
+     }
+-    return white.load() == 1;
++    return false;
+ }
+ 
+ void PrintKernel(const std::string& info) {
+@@ -117,24 +113,33 @@ void PrintKernel(const std::string& info) {
+     syscall(435, c_info, info.size() + 1); // SYS_jiacheng_printk = 435
+ }
+ 
+-std::string GetCurrentPackageName() {
+-    std::ifstream cmdlineFile("/proc/self/cmdline");
+-    std::string cmdline;
+-    getline(cmdlineFile, cmdline);
+-    cmdlineFile.close();
+-    return cmdline.substr(0, cmdline.find((char)0));
++std::string GetCurrentProcessName() {
++    // because android fromework would reset argv[0] to <pre-initialized>
++    // so we have to modify source code in framework directory conrrespondingly
++    return std::string(__progname);
+ }
+ 
+-bool SwapOutRange(void* start, size_t size) {
+-    Profiler* profiler = Profiler::Current();
+-    if (profiler->GetDuringGcFlag()) {
++bool ColdRange(void* start, size_t size) {
++    gc::Heap* heap = Runtime::Current()->GetHeap();
++    if (heap->GetDuringGcFlag()) {
+         return false;
+     }
+-    madvise(start, size, 233);
++    madvise(start, size, MADV_COLD_RUNTIME);
++    std::this_thread::sleep_for(std::chrono::nanoseconds(100));
+     return true;
+ }
+ 
+-
++bool HotRange(void* start, size_t size) {
++    gc::Heap* heap = Runtime::Current()->GetHeap();
++    if (heap->GetDuringGcFlag()) {
++        return false;
++    }
++    madvise(start, size, MADV_HOT_RUNTIME);
++    std::this_thread::sleep_for(std::chrono::nanoseconds(100));
++    return true;
++}
+ 
+ } // namespace jiacheng
+ } // namespace art
++
++// jiacheng end
+diff --git a/runtime/jiacheng_utils.h b/runtime/jiacheng_utils.h
+index 0021e0f519..3537aad351 100644
+--- a/runtime/jiacheng_utils.h
++++ b/runtime/jiacheng_utils.h
+@@ -1,29 +1,29 @@
++// jiacheng start
+ #ifndef ART_RUNTIME_JIACHENG_UTILS_H_
+ #define ART_RUNTIME_JIACHENG_UTILS_H_
+ 
++#include "jiacheng_global.h"
+ #include <string>
+ 
+ namespace art {
+ namespace jiacheng {
+ 
+-void CurrentThreadSleepNanoSecond(const unsigned long n);
++uint64_t GenerateID();
+ 
+-void CurrentThreadSleepSecond(const unsigned long n);
+-
+-bool CheckHot();
+-
+-uint32_t GenerateRandomKey();
+-
+-std::string GetCurrentPackageName();
++std::string GetCurrentProcessName();
+ 
+ bool IsWhiteApp();
+ 
+ void PrintKernel(const std::string& info);
+ 
+-bool SwapOutRange(void* start, size_t size);
++bool ColdRange(void* start, size_t size);
++
++bool HotRange(void* start, size_t size);
+ 
+ } // namespace jiacheng
+ } // namespace art
+ 
+ 
+-#endif
+\ No newline at end of file
++#endif
++
++// jiacheng end
+\ No newline at end of file
+diff --git a/runtime/mirror/array.h b/runtime/mirror/array.h
+index 00d101ab7f..6076875890 100644
+--- a/runtime/mirror/array.h
++++ b/runtime/mirror/array.h
+@@ -34,7 +34,11 @@ class MANAGED Array : public Object {
+  public:
+   // jiacheng start
+   // static constexpr size_t kFirstElementOffset = 12u;
++  #ifdef JIACHENG_DEBUG
++  static constexpr size_t kFirstElementOffset = 12u + 8u + 8u;
++  #else
+   static constexpr size_t kFirstElementOffset = 12u + 8u;
++  #endif
+   // jiacheng end
+ 
+ 
+diff --git a/runtime/mirror/object-inl.h b/runtime/mirror/object-inl.h
+index b908c43a6a..3199efd28d 100644
+--- a/runtime/mirror/object-inl.h
++++ b/runtime/mirror/object-inl.h
+@@ -954,6 +954,44 @@ inline void Object::VerifyTransaction() {
+   }
+ }
+ 
++// jiacheng start
++inline void Object::SetForegroundAccessRecord(uint16_t current_time) {
++  if (Runtime::Current()->IsSystemServer()) return;
++  if (foreground_access_record_ != current_time) {
++    foreground_access_record_ = current_time;
++  }
++}
++
++inline uint16_t Object::GetForegroundAccessRecord() {
++  if (Runtime::Current()->IsSystemServer()) return 0;
++  return foreground_access_record_;
++}
++
++inline void Object::SetBackgroundAccessRecord(uint16_t current_time) {
++  if (Runtime::Current()->IsSystemServer()) return;
++  if (background_access_record_ != current_time) {
++    background_access_record_ = current_time;
++  }
++}
++
++inline uint16_t Object::GetBackgroundAccessRecord() {
++  if (Runtime::Current()->IsSystemServer()) return 0;
++  return background_access_record_;
++}
++
++inline void Object::SetHotLaunchAccessRecord(uint16_t current_time) {
++  if (Runtime::Current()->IsSystemServer()) return;
++  if (hot_launch_access_record_ != current_time) {
++    hot_launch_access_record_ = current_time;
++  }
++}
++
++inline uint16_t Object::GetHotLaunchAccessRecord() {
++  if (Runtime::Current()->IsSystemServer()) return 0;
++  return hot_launch_access_record_;
++}
++// jiacheng end
++
+ }  // namespace mirror
+ }  // namespace art
+ 
+diff --git a/runtime/mirror/object.cc b/runtime/mirror/object.cc
+index 227aa7f3d2..f549ac0f90 100644
+--- a/runtime/mirror/object.cc
++++ b/runtime/mirror/object.cc
+@@ -38,6 +38,10 @@
+ #include "throwable.h"
+ #include "well_known_classes.h"
+ 
++// jiacheng start
++#include "jiacheng_global.h"
++// jiacheng end
++
+ namespace art {
+ namespace mirror {
+ 
+@@ -300,48 +304,27 @@ std::string Object::PrettyTypeOf() {
+   return result;
+ }
+ 
+-// jiacheng start
+-void Object::SetForegroundAccessRecord(uint16_t current_time) {
+-  // Runtime* runtime = Runtime::Current();
+-  // if ((!runtime->GetStartupCompleted()) || runtime->IsSystemServer()) return;
+-  if (Runtime::Current()->IsSystemServer()) return;
+-  foreground_access_record_ = current_time;
+-}
+-
+ 
+-uint16_t Object::GetForegroundAccessRecord() {
+-  // Runtime* runtime = Runtime::Current();
+-  // if ((!runtime->GetStartupCompleted()) || runtime->IsSystemServer()) return 0;
+-  if (Runtime::Current()->IsSystemServer()) return 0;
+-  return foreground_access_record_;
+-}
+-
+-void Object::SetBackgroundAccessRecord(uint16_t current_time) {
+-  // Runtime* runtime = Runtime::Current();
+-  // if ((!runtime->GetStartupCompleted()) || runtime->IsSystemServer()) return;
+-  if (Runtime::Current()->IsSystemServer()) return;
+-  background_access_record_ = current_time;
+-}
+-
+-uint16_t Object::GetBackgroundAccessRecord() {
+-  // Runtime* runtime = Runtime::Current();
+-  // if ((!runtime->GetStartupCompleted()) || runtime->IsSystemServer()) return 0;
+-  if (Runtime::Current()->IsSystemServer()) return 0;
+-  return background_access_record_;
++// jiacheng start
++#ifdef JIACHENG_DEBUG
++void Object::SetDebugFlag(uint64_t debug_flag) {
++  debug_flag_.store(debug_flag, std::memory_order_relaxed);
+ }
+ 
+-void Object::SetSwitchAccessRecord(uint16_t current_time) {
+-  // Runtime* runtime = Runtime::Current();
+-  // if ((!runtime->GetStartupCompleted()) || runtime->IsSystemServer()) return;
+-  if (Runtime::Current()->IsSystemServer()) return;
+-  switch_access_record_ = current_time;
++uint64_t Object::GetDebugFlag() {
++  return debug_flag_.load(std::memory_order_relaxed);
+ }
+-
+-uint16_t Object::GetSwitchAccessRecord() {
+-  // Runtime* runtime = Runtime::Current();
+-  // if ((!runtime->GetStartupCompleted()) || runtime->IsSystemServer()) return 0;
+-  if (Runtime::Current()->IsSystemServer()) return 0;
+-  return switch_access_record_;
++#endif
++
++void Object::Debug() {
++  LOG(INFO) << "jiacheng object.cc Object::Debug()"
++            << " object= " << static_cast<void*>(this)
++            << " foreground_access_record_= " << foreground_access_record_
++            << " background_access_record_= " << background_access_record_
++            << " hot_launch_access_record_= " << hot_launch_access_record_
++            << " padding_= " << padding_
++            << " debug_flag_= " << debug_flag_.load(std::memory_order_relaxed)
++            ;
+ }
+ 
+ 
+diff --git a/runtime/mirror/object.h b/runtime/mirror/object.h
+index 32f9208c20..c3f4d0a19d 100644
+--- a/runtime/mirror/object.h
++++ b/runtime/mirror/object.h
+@@ -31,6 +31,7 @@
+ 
+ // jiacheng start
+ #include "jiacheng_barrier.h"
++#include "jiacheng_global.h"
+ // jiacheng end
+ 
+ namespace art {
+@@ -98,17 +99,101 @@ class MANAGED LOCKABLE Object {
+   }
+ 
+   // jiacheng start
+-  void SetForegroundAccessRecord(uint16_t current_time);
++  static constexpr MemberOffset ForegroundAccessRecordOffset() {
++    return OFFSET_OF_OBJECT_MEMBER(Object, foreground_access_record_);
++  }
++
++  static constexpr MemberOffset BackgroundAccessRecordOffset() {
++    return OFFSET_OF_OBJECT_MEMBER(Object, background_access_record_);
++  }
++
++  static constexpr MemberOffset HotLaunchAccessRecordOffset() {
++    return OFFSET_OF_OBJECT_MEMBER(Object, hot_launch_access_record_);
++  }
++
++  static constexpr MemberOffset PaddingOffset() {
++    return OFFSET_OF_OBJECT_MEMBER(Object, padding_);
++  }
++
++  ALWAYS_INLINE void SetForegroundAccessRecord(uint16_t current_time);
++
++  ALWAYS_INLINE uint16_t GetForegroundAccessRecord();
++
++  ALWAYS_INLINE void SetBackgroundAccessRecord(uint16_t current_time);
++
++  ALWAYS_INLINE uint16_t GetBackgroundAccessRecord();
++
++  ALWAYS_INLINE void SetHotLaunchAccessRecord(uint16_t current_time);
++
++  ALWAYS_INLINE uint16_t GetHotLaunchAccessRecord();
++
++  ALWAYS_INLINE void SetTargetFlag() {
++    if (!GetTargetFlag()) {
++      padding_ = padding_ | 0x1;
++    }
++  }
++
++  ALWAYS_INLINE void ClearTargetFlag() {
++    padding_ = padding_ & 0xfffe;
++  }
++
++  ALWAYS_INLINE bool GetTargetFlag() {
++    return  padding_ & 0x1;
++  }
++
++  ALWAYS_INLINE void SetForegroundAllocationFlag() {
++      padding_ = padding_ | 0x2;
++  }
+ 
+-  uint16_t GetForegroundAccessRecord();
++  ALWAYS_INLINE void ClearForegroundAllocationFlag() {
++    padding_ = padding_ & 0xfffD;
++  }
+ 
+-  void SetBackgroundAccessRecord(uint16_t current_time);
++  ALWAYS_INLINE bool GetForegroundAllocationFlag() {
++    return  padding_ & 0x2;
++  }
+ 
+-  uint16_t GetBackgroundAccessRecord();
++  ALWAYS_INLINE void SetBackgroundAllocationFlag() {
++      padding_ = padding_ | 0x4;
++  }
+ 
+-  void SetSwitchAccessRecord(uint16_t current_time);
++  ALWAYS_INLINE void ClearBackgroundAllocationFlag() {
++    padding_ = padding_ & 0xfffB;
++  }
++
++  ALWAYS_INLINE bool GetBackgroundAllocationFlag() {
++    return  padding_ & 0x4;
++  }
++
++
++  ALWAYS_INLINE void SetPadding(uint16_t padding) {
++    padding_ = padding;
++  }
++
++  ALWAYS_INLINE uint16_t GetPadding() {
++    return padding_;
++  }
++
++  #ifdef JIACHENG_DEBUG
++  void SetDebugFlag(uint64_t debug_flag);
++
++  uint64_t GetDebugFlag();
++  #endif
++
++
++  void CopyHeaderFrom(Object* from) {
++    SetForegroundAccessRecord(from->GetForegroundAccessRecord());
++    SetBackgroundAccessRecord(from->GetBackgroundAccessRecord());
++    SetHotLaunchAccessRecord(from->GetHotLaunchAccessRecord());
++    SetPadding(from->GetPadding());
++    #ifdef JIACHENG_DEBUG
++    SetDebugFlag(from->GetDebugFlag());
++    #endif
++  }
++
++
++  void Debug();
+ 
+-  uint16_t GetSwitchAccessRecord();
+   // jiacheng end
+ 
+   template<VerifyObjectFlags kVerifyFlags = kDefaultVerifyFlags,
+@@ -801,8 +886,12 @@ class MANAGED LOCKABLE Object {
+   // jiacheng start
+   uint16_t foreground_access_record_;
+   uint16_t background_access_record_;
+-  uint16_t switch_access_record_;
+-  uint16_t padding_;
++  uint16_t hot_launch_access_record_;
++  uint16_t padding_;   // used for debug
++
++#ifdef JIACHENG_DEBUG
++  std::atomic<uint64_t> debug_flag_;
++#endif
+   // jiacheng end
+ 
+ #ifdef USE_BROOKS_READ_BARRIER
+diff --git a/runtime/thread-inl.h b/runtime/thread-inl.h
+index 00f882e3e0..7cc1100528 100644
+--- a/runtime/thread-inl.h
++++ b/runtime/thread-inl.h
+@@ -30,6 +30,10 @@
+ #include "thread-current-inl.h"
+ #include "thread_pool.h"
+ 
++// jiacheng start
++#include "jiacheng_barrier.h"
++// jiacheng end
++
+ namespace art {
+ 
+ // Quickly access the current thread from a JNIEnv.
+@@ -307,6 +311,9 @@ inline mirror::Object* Thread::AllocTlab(size_t bytes) {
+   ++tlsPtr_.thread_local_objects;
+   mirror::Object* ret = reinterpret_cast<mirror::Object*>(tlsPtr_.thread_local_pos);
+   tlsPtr_.thread_local_pos += bytes;
++  // jiacheng start
++  jiacheng::AllocationNewBarrier(reinterpret_cast<uint64_t>(ret));
++  // jiacheng end
+   return ret;
+ }
+ 
+diff --git a/runtime/thread.cc b/runtime/thread.cc
+index 70ed7c8038..eaee9dfb69 100644
+--- a/runtime/thread.cc
++++ b/runtime/thread.cc
+@@ -143,6 +143,9 @@ static const char* kThreadNameDuringStartup = "<native thread without managed pe
+ 
+ void Thread::InitCardTable() {
+   tlsPtr_.card_table = Runtime::Current()->GetHeap()->GetCardTable()->GetBiasedBegin();
++  // jiacheng start
++  tlsPtr_.card_table2 = Runtime::Current()->GetHeap()->GetCardTable2()->GetBiasedBegin();
++  // jiacheng end
+ }
+ 
+ static void UnimplementedEntryPoint() {
+@@ -4287,4 +4290,5 @@ bool Thread::IsSystemDaemon() const {
+       WellKnownClasses::java_lang_Thread_systemDaemon)->GetBoolean(GetPeer());
+ }
+ 
++
+ }  // namespace art
+diff --git a/runtime/thread.h b/runtime/thread.h
+index dd483c188d..ace496e1a9 100644
+--- a/runtime/thread.h
++++ b/runtime/thread.h
+@@ -759,6 +759,13 @@ class Thread {
+     return ThreadOffsetFromTlsPtr<pointer_size>(OFFSETOF_MEMBER(tls_ptr_sized_values, card_table));
+   }
+ 
++  // jiacheng start
++  template<PointerSize pointer_size>
++  static constexpr ThreadOffset<pointer_size> CardTable2Offset() {
++    return ThreadOffsetFromTlsPtr<pointer_size>(OFFSETOF_MEMBER(tls_ptr_sized_values, card_table2));
++  }
++  // jiacheng end
++
+   template<PointerSize pointer_size>
+   static constexpr ThreadOffset<pointer_size> ThreadSuspendTriggerOffset() {
+     return ThreadOffsetFromTlsPtr<pointer_size>(
+@@ -1601,6 +1608,9 @@ class Thread {
+       flip_function(nullptr), method_verifier(nullptr), thread_local_mark_stack(nullptr),
+       async_exception(nullptr) {
+       std::fill(held_mutexes, held_mutexes + kLockLevelCount, nullptr);
++      // jiacheng start
++      card_table2 = nullptr;
++      // jiacheng end
+     }
+ 
+     // The biased card table, see CardTable for details.
+@@ -1757,6 +1767,10 @@ class Thread {
+ 
+     // The pending async-exception or null.
+     mirror::Throwable* async_exception;
++
++    // jiacheng start
++    uint8_t* card_table2;
++    // jiacheng end
+   } tlsPtr_;
+ 
+   // Small thread-local cache to be used from the interpreter.
+diff --git a/runtime/write_barrier-inl.h b/runtime/write_barrier-inl.h
+index af8c1be828..baee02815e 100644
+--- a/runtime/write_barrier-inl.h
++++ b/runtime/write_barrier-inl.h
+@@ -24,6 +24,10 @@
+ #include "obj_ptr-inl.h"
+ #include "runtime.h"
+ 
++// jiacheng start
++#include "jiacheng_utils.h"
++// jiacheng end
++
+ namespace art {
+ 
+ template <WriteBarrier::NullCheck kNullCheck>
+@@ -35,22 +39,37 @@ inline void WriteBarrier::ForFieldWrite(ObjPtr<mirror::Object> dst,
+   }
+   DCHECK(new_value != nullptr);
+   GetCardTable()->MarkCard(dst.Ptr());
++  // jiacheng start
++  GetCardTable2()->MarkCard(dst.Ptr());
++  // jiacheng end
+ }
+ 
+ inline void WriteBarrier::ForArrayWrite(ObjPtr<mirror::Object> dst,
+                                         int start_offset ATTRIBUTE_UNUSED,
+                                         size_t length ATTRIBUTE_UNUSED) {
+   GetCardTable()->MarkCard(dst.Ptr());
++  // jiacheng start
++  GetCardTable2()->MarkCard(dst.Ptr());
++  // jiacheng end
+ }
+ 
+ inline void WriteBarrier::ForEveryFieldWrite(ObjPtr<mirror::Object> obj) {
+   GetCardTable()->MarkCard(obj.Ptr());
++  // jiacheng start
++  GetCardTable2()->MarkCard(obj.Ptr());
++  // jiacheng end
+ }
+ 
+ inline gc::accounting::CardTable* WriteBarrier::GetCardTable() {
+   return Runtime::Current()->GetHeap()->GetCardTable();
+ }
+ 
++// jiacheng start
++inline gc::accounting::CardTable* WriteBarrier::GetCardTable2() {
++  return Runtime::Current()->GetHeap()->GetCardTable2();
++}
++// jiacheng end
++
+ }  // namespace art
+ 
+ #endif  // ART_RUNTIME_WRITE_BARRIER_INL_H_
+diff --git a/runtime/write_barrier.h b/runtime/write_barrier.h
+index 112154e14a..71b85f66e6 100644
+--- a/runtime/write_barrier.h
++++ b/runtime/write_barrier.h
+@@ -55,6 +55,10 @@ class WriteBarrier {
+ 
+  private:
+   ALWAYS_INLINE static gc::accounting::CardTable* GetCardTable();
++
++  // jiacheng start
++  ALWAYS_INLINE static gc::accounting::CardTable* GetCardTable2();
++  // jiacheng end
+ };
+ 
+ }  // namespace art
+-- 
+2.34.1
+

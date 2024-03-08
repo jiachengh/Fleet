@@ -1,0 +1,1 @@
+adb shell am force-stop 'com.rovio.angrybirds'

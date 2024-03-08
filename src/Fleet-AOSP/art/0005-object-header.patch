@@ -1,0 +1,1280 @@
+From 06033deb99669ee962f5fdae9f3f4ee1a38f857e Mon Sep 17 00:00:00 2001
+From: jiachengh <jiacheng.huang@outlook.com>
+Date: Mon, 8 Aug 2022 21:51:44 +0800
+Subject: [PATCH 5/7] object header
+
+Change-Id: Id35f5a070aaf7cf80e525050b21f86dfd119bb5e
+Signed-off-by: jiachengh <jiacheng.huang@outlook.com>
+---
+ compiler/optimizing/code_generator_arm64.cc   |  2 +-
+ runtime/Android.bp                            |  1 -
+ runtime/gc/collector/concurrent_copying-inl.h | 17 +++-
+ runtime/gc/collector/concurrent_copying.cc    | 56 ++++++++---
+ runtime/gc/heap.cc                            |  1 +
+ runtime/gc/space/region_space.cc              | 84 +++++++++--------
+ runtime/gc/space/region_space.h               | 12 ++-
+ runtime/jiacheng_barrier.cc                   | 27 ++----
+ runtime/jiacheng_barrier.h                    |  1 -
+ runtime/jiacheng_cheatsheet.cc                | 26 -----
+ runtime/jiacheng_cheatsheet.h                 | 26 -----
+ runtime/jiacheng_common.h                     | 24 +++++
+ runtime/jiacheng_debug.cc                     |  8 +-
+ runtime/jiacheng_debug.h                      |  2 +
+ runtime/jiacheng_hack.cc                      | 48 +++++++---
+ runtime/jiacheng_hack.h                       |  2 +
+ runtime/jiacheng_profiler.cc                  | 94 ++++++++++++++++---
+ runtime/jiacheng_profiler.h                   | 22 +++++
+ runtime/jiacheng_swapper.cc                   | 42 +++++----
+ runtime/jiacheng_swapper.h                    |  2 +
+ runtime/jiacheng_utils.cc                     |  2 +-
+ runtime/jiacheng_utils.h                      |  1 -
+ runtime/mirror/object-inl.h                   |  1 -
+ runtime/mirror/object-refvisitor-inl.h        |  3 +
+ runtime/mirror/object.cc                      | 48 +++++++++-
+ runtime/mirror/object.h                       | 25 +++--
+ 26 files changed, 378 insertions(+), 199 deletions(-)
+ delete mode 100644 runtime/jiacheng_cheatsheet.cc
+ delete mode 100644 runtime/jiacheng_cheatsheet.h
+ create mode 100644 runtime/jiacheng_common.h
+
+diff --git a/compiler/optimizing/code_generator_arm64.cc b/compiler/optimizing/code_generator_arm64.cc
+index 99287cf900..96ff9eeee4 100644
+--- a/compiler/optimizing/code_generator_arm64.cc
++++ b/compiler/optimizing/code_generator_arm64.cc
+@@ -1870,7 +1870,7 @@ void LocationsBuilderARM64::HandleFieldGet(HInstruction* instruction,
+ 
+   bool object_field_get_with_read_barrier =
+       kEmitCompilerReadBarrier && (instruction->GetType() == DataType::Type::kReference);
+-  // jiacheng start
++  // 
+   // LocationSummary* locations =
+   //     new (GetGraph()->GetAllocator()) LocationSummary(instruction,
+   //                                                      object_field_get_with_read_barrier
+diff --git a/runtime/Android.bp b/runtime/Android.bp
+index 847cd4e90d..d47d9ad609 100644
+--- a/runtime/Android.bp
++++ b/runtime/Android.bp
+@@ -106,7 +106,6 @@ libart_cc_defaults {
+         "interpreter/unstarted_runtime.cc",
+         "java_frame_root_info.cc",
+ // jiacheng start ------------------------------------
+-        "jiacheng_cheatsheet.cc",
+         "jiacheng_hack.cc",
+         "jiacheng_activity_manager.cc",
+         "jiacheng_utils.cc",
+diff --git a/runtime/gc/collector/concurrent_copying-inl.h b/runtime/gc/collector/concurrent_copying-inl.h
+index c50a1a057c..691ffb1d88 100644
+--- a/runtime/gc/collector/concurrent_copying-inl.h
++++ b/runtime/gc/collector/concurrent_copying-inl.h
+@@ -181,10 +181,10 @@ inline mirror::Object* ConcurrentCopying::Mark(Thread* const self,
+           to_ref = Copy(self, from_ref, holder, offset);
+         }
+         // jiacheng start
+-        jiacheng::Profiler* profiler = jiacheng::Profiler::Current();
+-        if (to_ref != from_ref && profiler->TestInAccessWS(from_ref)) {
+-          profiler->RecordAccessWS(to_ref);
+-        }
++        // jiacheng::Profiler* profiler = jiacheng::Profiler::Current();
++        // if (to_ref != from_ref && profiler->TestInAccessWS(from_ref)) {
++        //   profiler->RecordAccessWS(to_ref);
++        // }
+         // jiacheng end
+         // The copy should either be in a to-space region, or in the
+         // non-moving space, if it could not fit in a to-space region.
+@@ -209,6 +209,15 @@ inline mirror::Object* ConcurrentCopying::Mark(Thread* const self,
+       case space::RegionSpace::RegionType::kRegionTypeColdSpace: {
+         return MarkColdSpaceRegion(self, from_ref, region_space_bitmap_);
+       }
++      case space::RegionSpace::RegionType::kRegionTypeHotSpace: {
++        if (kNoUnEvac && use_generational_cc_ && !region_space_->IsLargeObject(from_ref)) {
++          if (!kFromGCThread) {
++            DCHECK(IsMarkedInUnevacFromSpace(from_ref)) << "Returning unmarked object to mutator";
++          }
++          return from_ref;
++        }
++        return MarkUnevacFromSpaceRegion(self, from_ref, region_space_bitmap_);
++      }
+       // jiacheng end
+       default:
+         // The reference is in an unused region. Remove memory protection from
+diff --git a/runtime/gc/collector/concurrent_copying.cc b/runtime/gc/collector/concurrent_copying.cc
+index b9d5ff1824..11ced05e50 100644
+--- a/runtime/gc/collector/concurrent_copying.cc
++++ b/runtime/gc/collector/concurrent_copying.cc
+@@ -97,7 +97,7 @@ class ConcurrentCopying::RegionRememberedObjectsAsRootVisitor {
+   explicit RegionRememberedObjectsAsRootVisitor(ConcurrentCopying* cc) : collector_(cc) {}
+ 
+   ALWAYS_INLINE mirror::Object* operator()(mirror::Object* ref) const REQUIRES_SHARED(Locks::mutator_lock_) {
+-    LOG(INFO) << "jiacheng concurrent_copying.cc 1279 ref= " << size_t(ref);
++    // LOG(INFO) << "jiacheng concurrent_copying.cc 100 ref= " << size_t(ref);
+     return collector_->MarkObject(ref);
+   }
+ 
+@@ -782,6 +782,9 @@ void ConcurrentCopying::VerifyNoMissingCardMarks() {
+ 
+ // Switch threads that from from-space to to-space refs. Forward/mark the thread roots.
+ void ConcurrentCopying::FlipThreadRoots() {
++  // jiacheng start
++  LOG(INFO) << "jiacheng debug concurrent_copying.cc 786 FlipThreadRoots()";
++  // jiacehng end
+   TimingLogger::ScopedTiming split("FlipThreadRoots", GetTimings());
+   if (kVerboseMode || heap_->dump_region_info_before_gc_) {
+     LOG(INFO) << "time=" << region_space_->Time();
+@@ -837,6 +840,9 @@ class ConcurrentCopying::GrayImmuneObjectVisitor {
+ };
+ 
+ void ConcurrentCopying::GrayAllDirtyImmuneObjects() {
++  // jiacheng start
++  LOG(INFO) << "jiacheng debug concurrent_copying.cc 841 GrayAllDirtyImmuneObjects()";
++  // jiacehng end
+   TimingLogger::ScopedTiming split("GrayAllDirtyImmuneObjects", GetTimings());
+   accounting::CardTable* const card_table = heap_->GetCardTable();
+   Thread* const self = Thread::Current();
+@@ -1161,9 +1167,17 @@ class ConcurrentCopying::ComputeLiveBytesAndMarkRefFieldsVisitor {
+ };
+ 
+ void ConcurrentCopying::AddLiveBytesAndScanRef(mirror::Object* ref) {
+-  DCHECK(ref != nullptr);
+-  DCHECK(!immune_spaces_.ContainsObject(ref));
+-  DCHECK(TestMarkBitmapForRef(ref));
++  // jiacheng start
++  // DCHECK(ref != nullptr);
++  // DCHECK(!immune_spaces_.ContainsObject(ref));
++  // DCHECK(TestMarkBitmapForRef(ref));
++  CHECK(ref != nullptr);
++  CHECK(!immune_spaces_.ContainsObject(ref));
++  CHECK(TestMarkBitmapForRef(ref));
++  if (reinterpret_cast<size_t>(ref) < 0xffff) {
++    return;
++  }
++  // jiacheng end
+   size_t obj_region_idx = static_cast<size_t>(-1);
+   if (LIKELY(region_space_->HasAddress(ref))) {
+     obj_region_idx = region_space_->RegionIdxForRefUnchecked(ref);
+@@ -1362,6 +1376,9 @@ class ConcurrentCopying::ImmuneSpaceCaptureRefsVisitor {
+ */
+ 
+ void ConcurrentCopying::MarkingPhase() {
++  // jiacheng start
++  LOG(INFO) << "jiacheng debug concurrent_copying.cc 1374 MarkingPhase()";
++  // jiacheng end
+   TimingLogger::ScopedTiming split("MarkingPhase", GetTimings());
+   if (kVerboseMode) {
+     LOG(INFO) << "GC MarkingPhase";
+@@ -1447,6 +1464,9 @@ void ConcurrentCopying::ScanDirtyObject(mirror::Object* obj) {
+ 
+ // Concurrently mark roots that are guarded by read barriers and process the mark stack.
+ void ConcurrentCopying::CopyingPhase() {
++  // jiacheng start
++  LOG(INFO) << "jiacheng debug concurrent_copying.cc 1468 CopyingPhase()";
++  // jiacheng end
+   TimingLogger::ScopedTiming split("CopyingPhase", GetTimings());
+   if (kVerboseMode) {
+     LOG(INFO) << "GC CopyingPhase";
+@@ -1557,6 +1577,17 @@ void ConcurrentCopying::CopyingPhase() {
+       LOG(INFO) << "GC end of ScanCardsForSpace";
+     }
+   }
++  // jiacheng start
++  {
++    LOG(INFO) << "jiacheng concurrent_copying.cc 1570";
++    RegionRememberedObjectsAsRootVisitor root_visitor(this);
++    region_space_->VisitRememberedObjectsAsRoot(root_visitor);
++    // TODO remove
++    RegionRememberedObjectsVisitor visitor(this);
++    region_space_->VisitRememberedObjects(visitor);
++  }
++  // jiacheng end
++
+   {
+     // For a sticky-bit collection, this phase needs to be after the card scanning since the
+     // mutator may read an unevac space object out of an image object. If the image object is no
+@@ -2676,6 +2707,9 @@ void ConcurrentCopying::CaptureRssAtPeak() {
+ }
+ 
+ void ConcurrentCopying::ReclaimPhase() {
++  // jiacheng start
++  LOG(INFO) << "jiacheng debug concurrent_copying.cc 2711 ReclaimPhase()";
++  // jiacheng end
+   TimingLogger::ScopedTiming split("ReclaimPhase", GetTimings());
+   if (kVerboseMode) {
+     LOG(INFO) << "GC ReclaimPhase";
+@@ -3179,9 +3213,9 @@ template <bool kNoUnEvac>
+ inline void ConcurrentCopying::Scan(mirror::Object* to_ref) {
+   // jiacheng start 
+   // 除了Scan还有很多其他地方对to_ref进行访问，例如检查barrier state
+-  // if(region_space_->IsInColdSpace(to_ref)) {
+-  //   return;
+-  // }
++  if(region_space_->IsInColdSpace(to_ref)) {
++    return;
++  }
+   if (!region_space_->IsInColdSpace(to_ref)) {
+     jiacheng::GCAccessTrigger(to_ref);
+   }
+@@ -3529,11 +3563,6 @@ mirror::Object* ConcurrentCopying::Copy(Thread* const self,
+          reinterpret_cast<const uint8_t*>(from_ref) + kObjectHeaderSize,
+          obj_size - kObjectHeaderSize);
+   // jiacheng start
+-  // if (jiacheng::IsWhiteApp()) {
+-  //   LOG(INFO) << "jiacheng ConcurrentCopying::Copy()"
+-  //             << " from_ref= " << reinterpret_cast<size_t>(from_ref)
+-  //             << " to_ref= " << reinterpret_cast<size_t>(to_ref);
+-  // }
+   jiacheng::GCAccessTrigger(to_ref);
+   jiacheng::GCAccessTrigger(from_ref);
+   // jiacheng end
+@@ -3796,6 +3825,9 @@ mirror::Object* ConcurrentCopying::MarkNonMoving(Thread* const self,
+ }
+ 
+ void ConcurrentCopying::FinishPhase() {
++  // jiacheng start
++  LOG(INFO) << "jiacheng debug concurrent_copying.cc 3829 FinishPhase()";
++  // jiacheng end
+   Thread* const self = Thread::Current();
+   {
+     MutexLock mu(self, mark_stack_lock_);
+diff --git a/runtime/gc/heap.cc b/runtime/gc/heap.cc
+index aee8c26560..0d9a2a4e9c 100644
+--- a/runtime/gc/heap.cc
++++ b/runtime/gc/heap.cc
+@@ -998,6 +998,7 @@ void Heap::ThreadFlipEnd(Thread* self) {
+ 
+ void Heap::UpdateProcessState(ProcessState old_process_state, ProcessState new_process_state) {
+   // jiacheng start
++  jiacheng::Profiler::Current()->SetSwitchingFlag();
+   jiacheng::UpdataAppState(old_process_state, new_process_state);
+   // jiacheng end
+   
+diff --git a/runtime/gc/space/region_space.cc b/runtime/gc/space/region_space.cc
+index 181da36282..c8d97b77da 100644
+--- a/runtime/gc/space/region_space.cc
++++ b/runtime/gc/space/region_space.cc
+@@ -340,11 +340,11 @@ void RegionSpace::SetFromSpace(accounting::ReadBarrierTable* rb_table,
+                                EvacMode evac_mode,
+                                bool clear_live_bytes) {
+   // jiacheng start
+-  if (jiacheng::IsWhiteApp()) {
+-    LOG(INFO) << "jiacheng region_space.cc 343 RegionSpace::SetFromSpace()"
+-              << " evac_mode= " << evac_mode
+-              << " clear_live_bytes= " << clear_live_bytes;
+-  }
++  // if (jiacheng::IsWhiteApp()) {
++  //   LOG(INFO) << "jiacheng region_space.cc 343 RegionSpace::SetFromSpace()"
++  //             << " evac_mode= " << evac_mode
++  //             << " clear_live_bytes= " << clear_live_bytes;
++  // }
+   // jiacheng end
+   
+   // Live bytes are only preserved (i.e. not cleared) during sticky-bit CC collections.
+@@ -394,12 +394,12 @@ void RegionSpace::SetFromSpace(accounting::ReadBarrierTable* rb_table,
+           r->SetAsFromSpace();
+ 
+           // jiacheng start
+-          if (jiacheng::IsWhiteApp()) {
+-            LOG(INFO) << "jiacheng region_space.cc 393 RegionSpace::SetFromSpace() SetAsFromSpace()"
+-                      << " r->IsNewlyAllocated()= " << r->IsNewlyAllocated()
+-                      << " evac_mode= " << evac_mode
+-                      << " region_index= " << r->Idx();
+-          }
++          // if (jiacheng::IsWhiteApp()) {
++          //   LOG(INFO) << "jiacheng region_space.cc 393 RegionSpace::SetFromSpace() SetAsFromSpace()"
++          //             << " r->IsNewlyAllocated()= " << r->IsNewlyAllocated()
++          //             << " evac_mode= " << evac_mode
++          //             << " region_index= Region[" << r->Idx() << ']';
++          // }
+           // jiacheng end
+ 
+           DCHECK(r->IsInFromSpace());
+@@ -1050,12 +1050,12 @@ size_t RegionSpace::AllocationSizeNonvirtual(mirror::Object* obj, size_t* usable
+ 
+ void RegionSpace::Region::Clear(bool zero_and_release_pages) {
+   // jiacheng start
+-  if (jiacheng::IsWhiteApp()) {
+-    LOG(INFO) << "jiacheng region_space.cc 1047 Region::Clear()"
+-              << " zero_and_release_pages= " << zero_and_release_pages
+-              << " region_index= " << idx_
+-              << " region_type= " << type_;
+-  }
++  // if (jiacheng::IsWhiteApp()) {
++  //   LOG(INFO) << "jiacheng region_space.cc 1047 Region::Clear()"
++  //             << " zero_and_release_pages= " << zero_and_release_pages
++  //             << " region_index= Region[" << Idx() << ']'
++  //             << " region_type= " << type_;
++  // }
+   // jiacheng end
+ 
+   top_.store(begin_, std::memory_order_relaxed);
+@@ -1108,11 +1108,11 @@ RegionSpace::Region* RegionSpace::AllocateRegion(bool for_evac) {
+         cyclic_alloc_region_index_ = (region_index + 1) % num_regions_;
+       }
+       // jiacheng start
+-      if (jiacheng::IsWhiteApp()) {
+-        LOG(INFO) << "jiacheng region_space.cc 1083 RegionSpace::AllocateRegion() "
+-                  << " for_evac= " << for_evac
+-                  << " region_index= " << region_index;
+-      }
++      // if (jiacheng::IsWhiteApp()) {
++      //   LOG(INFO) << "jiacheng region_space.cc 1083 RegionSpace::AllocateRegion() "
++      //             << " for_evac= " << for_evac
++      //             << " region_index= Region[" << r->Idx() << ']';
++      // }
+       // jiacheng end
+       return r;
+     }
+@@ -1255,17 +1255,20 @@ void RegionSpace::Region::InitRememberedSet() {
+ 
+ 
+ void RegionSpace::Region::WriteBackRememberedSet() {
+-  remembered_set_.clear();
+   if (IsFree()) {
+     return;
+   }
+   CHECK(!IsLarge() && !IsLargeTail());
++  // jiacheng start
++  LOG(INFO) << "jiacheng debug region_space.cc 1264 WriteBackRememberedSet()";
++  // jiacheng end
+   ColdWriteBackRefVisitor ref_visitor(this);
+   auto obj_visitor = [&](mirror::Object* obj) REQUIRES_SHARED(Locks::mutator_lock_) {
+     obj->VisitReferences<true, kVerifyNone, kWithoutReadBarrier>(ref_visitor, ref_visitor);
+   };
+   space::RegionSpace* region_space = art::Runtime::Current()->GetHeap()->GetRegionSpace();
+   region_space->WalkNonLargeRegion(obj_visitor, this);
++  remembered_set_.clear();
+ }
+ 
+ 
+@@ -1309,41 +1312,44 @@ void RegionSpace::JiachengDebug() {
+     // for (auto it : *remembered_set) {
+     //   ss << " key= " << it.first << " value= " << it.second;
+     // }
+-    r->Dump(ss);
++    // r->Dump(ss);
+     LOG(INFO) << ss.str();
+   }
+ }
+ 
+ uint32_t RegionSpace::SwapOutCold() {
+-  LOG(INFO) << "jiacheng region_space.cc 1283 RegionSpace::SwapOutCold()";
+-  uint64_t num_regions = 0;
++  size_t swap_out_num = 0;
+   uint8_t* begin, * end;
+   size_t swap_out_length;
+   MutexLock mu(Thread::Current(), region_lock_);
+   for (size_t i = 0; i < std::min(num_regions_, non_free_region_index_limit_); ++i) {
+     Region* r = &regions_[i];
+-    if (r->IsInColdToSpace()) {
++    if (r->IsInColdToSpace() || r->IsInColdSpace()) {
+       begin = r->Begin();
+-      end = r->Top();
+       // end = r->End();
++      end = r->Top();
+       swap_out_length = std::distance(begin, end);
+       jiacheng::SwapOutRange(begin, swap_out_length);
+       // 防止重新换入
+-      CheckedCall(mprotect, __FUNCTION__, begin, swap_out_length, PROT_NONE);
+-      ++num_regions;
++      CheckedCall(mprotect, __FUNCTION__, begin, swap_out_length, PROT_READ);
++      ++swap_out_num;
+     }
+   }
+-  return num_regions * kRegionSize;
++  LOG(INFO) << "jiacheng region_space.cc 1336 RegionSpace::SwapOutCold() num_regions= " << swap_out_num;
++  return swap_out_num * kRegionSize;
+ }
+ 
+-void RegionSpace::HandleFault(mirror::Object* ref) {
++bool RegionSpace::HandleFault(mirror::Object* ref) {
+   Region* r = RefToRegionUnlocked(ref);
++  // if (r->IsInColdSpace() || r->IsInColdToSpace()) {
+   uint8_t* begin = r->Begin();
+   // uint8_t* end = r->Top();
+   uint8_t* end = r->End();
+   size_t length = std::distance(begin, end);
+-  // CheckedCall(mprotect, __FUNCTION__, begin, length, PROT_READ | PROT_WRITE);
+-  if (mprotect(begin, length, PROT_READ | PROT_WRITE) == 0) {
++  if (mprotect(begin, length, PROT_READ | PROT_WRITE) == 0) { // maybe STW
++    // change cold region to normal region
++    r->SetAsToSpace();
++    // r->WriteBackRememberedSet(); 
+     LOG(INFO) << "jiacheng region_space.cc 1324 HandleFault() set PROT_READ | PROT_WRITE"
+               << " ref= " << ref
+               << " begin= " << reinterpret_cast<mirror::Object*>(begin)
+@@ -1351,7 +1357,7 @@ void RegionSpace::HandleFault(mirror::Object* ref) {
+               << " length= " << length
+               << " Success!"
+               ;
+-
++    return true;
+   } else {
+     LOG(INFO) << "jiacheng region_space.cc 1324 HandleFault() set PROT_READ | PROT_WRITE"
+               << " ref= " << ref
+@@ -1361,9 +1367,10 @@ void RegionSpace::HandleFault(mirror::Object* ref) {
+               << " errno= " << errno
+               << " fail!"
+               ;
++    return false;
+   }
+-
+-
++  // }
++  // return false;
+ }
+ 
+ 
+@@ -1385,7 +1392,8 @@ RegionSpace::Region* RegionSpace::AllocateColdRegion() {
+         // following the one that was just allocated.
+         cyclic_alloc_region_index_ = (region_index + 1) % num_regions_;
+       }
+-      LOG(INFO) << "jiacheng region_space.cc 1322 RegionSpace::AllocateColdRegion() region_index= " << region_index;
++      // LOG(INFO) << "jiacheng region_space.cc 1322 RegionSpace::AllocateColdRegion()"
++      //           << " region_index= Region[" << r->Idx() << ']';
+       return r;
+     }
+   }
+diff --git a/runtime/gc/space/region_space.h b/runtime/gc/space/region_space.h
+index 13ed05d927..9f5d99eefa 100644
+--- a/runtime/gc/space/region_space.h
++++ b/runtime/gc/space/region_space.h
+@@ -156,6 +156,7 @@ class RegionSpace final : public ContinuousMemMapAllocSpace {
+     // jiacheng start
+     kRegionTypeColdSpace,
+     kRegionTypeColdToSpace,
++    kRegionTypeHotSpace,
+     // jiacheng end
+     kRegionTypeNone,             // None.
+   };
+@@ -545,6 +546,10 @@ class RegionSpace final : public ContinuousMemMapAllocSpace {
+     bool IsInColdToSpace() const {
+       return type_ == RegionType::kRegionTypeColdToSpace;
+     }
++
++    bool IsInHotSpace() const {
++      return type_ == RegionType::kRegionTypeHotSpace;
++    }
+     // jiacheng end
+ 
+     bool IsInNoSpace() const {
+@@ -586,6 +591,11 @@ class RegionSpace final : public ContinuousMemMapAllocSpace {
+     }
+ 
+     // jiacheng start
++    void SetAsToSpace() {
++      is_newly_allocated_ = false;
++      type_ = RegionType::kRegionTypeToSpace;
++    }
++
+     void SetAsColdSpace() {
+       is_newly_allocated_ = false;
+       type_ = RegionType::kRegionTypeColdSpace;
+@@ -817,7 +827,7 @@ public:
+ 
+   uint32_t SwapOutCold() REQUIRES(!region_lock_);
+ 
+-  void HandleFault(mirror::Object* ref) REQUIRES(!region_lock_);
++  bool HandleFault(mirror::Object* ref) REQUIRES(!region_lock_);
+ 
+   Region* AllocateColdRegion() REQUIRES(region_lock_);
+ 
+diff --git a/runtime/jiacheng_barrier.cc b/runtime/jiacheng_barrier.cc
+index 4f518bbb6d..8d544d9ff5 100644
+--- a/runtime/jiacheng_barrier.cc
++++ b/runtime/jiacheng_barrier.cc
+@@ -16,25 +16,18 @@ void JiachengBarrier(uint64_t obj) {
+         return;
+     }
+     Profiler* profiler = Profiler::Current();
+-    if (profiler->GetPerceptibleFlag()) {
+-        return;
+-    }
+-
+-    // jiacheng debug start
+-
+-    // static size_t cnt = 0;
+-    // cnt += 1;
+-    // if (cnt % 100 == 0) {
+-    //     LOG(INFO) << "jiacheng JiachengBarrier() " << "obj= " << obj;
+-    //     cnt = 0;
+-    // }
++    mirror::Object* object = reinterpret_cast<mirror::Object*>(obj);
+ 
+-    // jiacheng debug end
+-    
+     if (!profiler->GetDuringGcFlag()) {
+-        profiler->RecordAccessWS(reinterpret_cast<mirror::Object *>(obj));
+-    } else {
+-        // profiler->RecordGcWS(reinterpret_cast<mirror::Object *>(obj));
++        uint16_t current_time = profiler->GetCurrentTime();
++        if (profiler->GetPerceptibleFlag()) { // foreground
++            object->SetForegroundAccessRecord(current_time);
++        } else {  // background
++            object->SetBackgroundAccessRecord(current_time);
++        }
++        if (profiler->GetSwitchingFlag() && object->GetSwitchAccessRecord()==0) {
++            object->SetSwitchAccessRecord(current_time);
++        }
+     }
+ }
+ 
+diff --git a/runtime/jiacheng_barrier.h b/runtime/jiacheng_barrier.h
+index 5cbf1a372d..f9250c6c3b 100644
+--- a/runtime/jiacheng_barrier.h
++++ b/runtime/jiacheng_barrier.h
+@@ -6,7 +6,6 @@
+ namespace art {
+ namespace jiacheng {
+ 
+-// void JiachengBarrier(uint64_t obj) REQUIRES_SHARED(Locks::mutator_lock_);
+ void JiachengBarrier(uint64_t obj);
+ 
+ 
+diff --git a/runtime/jiacheng_cheatsheet.cc b/runtime/jiacheng_cheatsheet.cc
+deleted file mode 100644
+index 0bcf1547ac..0000000000
+--- a/runtime/jiacheng_cheatsheet.cc
++++ /dev/null
+@@ -1,26 +0,0 @@
+-// #include "jiacheng_cheatsheet.h"
+-
+-
+-// namespace art {
+-// namespace jiacheng {
+-
+-
+-// void CheatSheet::AddRememberedSet(uint8_t *obj) {
+-//     remembered_set_.insert(obj);
+-// }
+-
+-// void CheatSheet::AddColdSet(uint8_t *obj) {
+-//     cold_set_.insert(obj);
+-// }
+-
+-// bool CheatSheet::InRememberedSet(uint8_t *obj) {
+-//     return remembered_set_.find(obj) != remembered_set_.end();
+-// }
+-
+-// bool CheatSheet::InColdSet(uint8_t *obj) {
+-//     return cold_set_.find(obj) != cold_set_.end();
+-// }
+-
+-
+-// }
+-// }
+\ No newline at end of file
+diff --git a/runtime/jiacheng_cheatsheet.h b/runtime/jiacheng_cheatsheet.h
+deleted file mode 100644
+index 9df19d195c..0000000000
+--- a/runtime/jiacheng_cheatsheet.h
++++ /dev/null
+@@ -1,26 +0,0 @@
+-// #ifndef ART_RUNTIME_JIACHENG_CHEATSHEET_H_
+-// #define ART_RUNTIME_JIACHENG_CHEATSHEET_H_
+-
+-// #include <set>
+-
+-// namespace art {
+-// namespace jiacheng {
+-
+-// class CheatSheet {
+-// public:
+-//     CheatSheet();
+-//     ~CheatSheet();
+-
+-//     void AddRememberedSet(uint8_t *obj);
+-//     void AddColdSet(uint8_t *obj);
+-
+-//     bool InRememberedSet(uint8_t *obj);
+-//     bool InColdSet(uint8_t * obj);
+-
+-//     std::map<uint8_t*, uint32_t> remembered_set_;
+-// };
+-
+-// }
+-// }
+-
+-// #endif
+\ No newline at end of file
+diff --git a/runtime/jiacheng_common.h b/runtime/jiacheng_common.h
+new file mode 100644
+index 0000000000..03a8025344
+--- /dev/null
++++ b/runtime/jiacheng_common.h
+@@ -0,0 +1,24 @@
++#ifndef ART_RUNTIME_JIACHENG_COMMON_H_
++#define ART_RUNTIME_JIACHENG_COMMON_H_
++
++#include "base/mutex.h"
++
++namespace art {
++namespace jiacheng {
++
++constexpr uint32_t CLOCK_TICK = 5; // second
++constexpr uint32_t SWITCHING_WINDOW_SIZE = 1; // Ticks
++constexpr uint32_t SWAPOUT_WINDOW_SIZE = 6; // Ticks
++
++constexpr uint32_t FOREGROUND_WS_WINDOW_SIZE = 1; // Ticks
++constexpr uint32_t BACKGROUND_WS_WINDOW_SIZE = 2; // Ticks
++
++constexpr bool RESERVE_FOREGROUND_WS_FLAG = true;
++constexpr bool RESERVE_SWITCHING_WS_FLAG = true;
++
++constexpr bool ACTIVE_SWAPOUT = true;
++
++} // namespace jiacheng
++} // namespace art
++
++#endif
+\ No newline at end of file
+diff --git a/runtime/jiacheng_debug.cc b/runtime/jiacheng_debug.cc
+index 9b699efcd7..f308572787 100644
+--- a/runtime/jiacheng_debug.cc
++++ b/runtime/jiacheng_debug.cc
+@@ -88,9 +88,8 @@ void ClearAndPrintWorkingSet() {
+ 
+ typedef void(*WalkCallback)(void *start, void *end, size_t num_bytes, void* callback_arg);
+ 
+-// 对ColdSpace中的Region进行Swap
++// 对所有Space中的对象进行Swap
+ void SwapOutAll() {
+-    // 对所有Space中的对象进行Swap
+     gc::Heap* heap = Runtime::Current()->GetHeap();
+     Thread* self = Thread::Current();
+     const std::vector<gc::space::ContinuousSpace*>* continues_spaces;
+@@ -107,11 +106,6 @@ void SwapOutAll() {
+         CurrentThreadSleepSecond(1);
+         SwapOutSpace(space);
+     }    
+-
+-    // 不直接使用SwapOutSpace()函数对所有Space中的对象进行Swap
+-    // LOG(INFO) << "jiacheng jiacheng_hack.cc 180 SwapOut()";
+-    // ColdSpace* cold_space = ColdSpace::Current();
+-    // cold_space->SwapOut();
+ }
+ 
+ 
+diff --git a/runtime/jiacheng_debug.h b/runtime/jiacheng_debug.h
+index 67f2cb8d75..9a240f8472 100644
+--- a/runtime/jiacheng_debug.h
++++ b/runtime/jiacheng_debug.h
+@@ -32,8 +32,10 @@ void SwapOutAll();
+ 
+ void SwapOutSpace(gc::space::Space* space);
+ 
++
+ /* ------------------- debug --------------------- */
+ 
++
+ std::string GetSpaceFromObject(mirror::Object* obj);
+ 
+ void PrintHeapObjectInformation();
+diff --git a/runtime/jiacheng_hack.cc b/runtime/jiacheng_hack.cc
+index 1a573d317b..b113f59654 100644
+--- a/runtime/jiacheng_hack.cc
++++ b/runtime/jiacheng_hack.cc
+@@ -5,6 +5,7 @@
+ #include "gc/space/region_space.h"
+ #include "gc/collector/garbage_collector.h"
+ #include "base/utils.h"
++#include "mirror/object-inl.h"
+ 
+ #include <sys/mman.h>
+ 
+@@ -14,9 +15,6 @@
+ #include "jiacheng_profiler.h"
+ #include "jiacheng_swapper.h"
+ 
+-
+-
+-
+ namespace art{
+ namespace jiacheng {
+ 
+@@ -38,8 +36,8 @@ bool HandleFault(int sig, siginfo_t* info, void* context) {
+ 
+     gc::space::RegionSpace* region_space = Runtime::Current()->GetHeap()->GetRegionSpace();
+     if (region_space->HasAddress(ref)) {
+-        region_space->HandleFault(ref);
+-        return true;
++        bool result = region_space->HandleFault(ref);
++        return result;
+     } else {
+         return false;
+     }
+@@ -86,9 +84,16 @@ void UpdataAppState(ProcessState old_process_state, ProcessState new_process_sta
+               ;
+ 
+     if (new_process_state == kProcessStateJankImperceptible) {
+-        profiler->ClearPerceptibleFlag();
++        if (profiler->GetPerceptibleFlag()) {
++            profiler->SetBackgroundTime(profiler->GetCurrentTime());
++            profiler->ClearPerceptibleFlag();
++        }
+     } else {
+-        profiler->SetPerceptibleFlag();
++        if (!profiler->GetPerceptibleFlag()) {
++            profiler->SetSwitchingTime(profiler->GetCurrentTime());
++            profiler->SetSwitchingFlag();
++            profiler->SetPerceptibleFlag();
++        }
+     }
+ 
+ }
+@@ -131,7 +136,7 @@ void AfterGarbageCollectorRun(const gc::collector::GarbageCollector* collector)
+ 
+     Runtime::Current()->GetHeap()->GetRegionSpace()->InitColdToRegionRememberedSet();
+     // jiacheng debug start
+-    Runtime::Current()->GetHeap()->GetRegionSpace()->JiachengDebug();
++    // Runtime::Current()->GetHeap()->GetRegionSpace()->JiachengDebug();
+     // jiacheng debug end
+ }
+ 
+@@ -139,14 +144,27 @@ void AfterGarbageCollectorRun(const gc::collector::GarbageCollector* collector)
+ // 1. Copy过程的from_ref和to_ref
+ // 2. Scan过程
+ void GCAccessTrigger(mirror::Object* obj) {
+-    if (!obj) {
+-        return;
+-    }
+-    if (!IsWhiteApp()) {
+-        return;
++    (void)obj;
++    // if (!obj) {
++    //     return;
++    // }
++    // if (!IsWhiteApp()) {
++    //     return;
++    // }
++    // Profiler* profiler = Profiler::Current();
++    // profiler->RecordGcWS(obj);
++}
++
++bool ObjectIsSwappableType(mirror::Object* obj) {
++    if (obj->IsArrayInstance()) {
++        return !obj->IsObjectArray();
++    } else {
++        return !obj->IsClass() && !obj->IsClassLoader() && !obj->IsDexCache() && !obj->IsString() && !obj->IsReferenceInstance();
+     }
+-    Profiler* profiler = Profiler::Current();
+-    profiler->RecordGcWS(obj);
++    // return (
++    //     (obj->IsArrayInstance() && !obj->IsObjectArray())
++    //     || (!obj->IsArrayInstance() && !obj->IsClass() && !obj->IsClassLoader() && !obj->IsDexCache() && !obj->IsString() && !obj->IsReferenceInstance())
++    // );
+ }
+ 
+ void JiachengDebug() {
+diff --git a/runtime/jiacheng_hack.h b/runtime/jiacheng_hack.h
+index fbe645e66e..c797fe36b2 100644
+--- a/runtime/jiacheng_hack.h
++++ b/runtime/jiacheng_hack.h
+@@ -32,6 +32,8 @@ void AfterGarbageCollectorRun(const gc::collector::GarbageCollector* collector);
+ 
+ void GCAccessTrigger(mirror::Object* obj);
+ 
++bool ObjectIsSwappableType(mirror::Object * obj) NO_THREAD_SAFETY_ANALYSIS;
++
+ void JiachengDebug();
+ 
+ } // namespace jiacheng
+diff --git a/runtime/jiacheng_profiler.cc b/runtime/jiacheng_profiler.cc
+index 42c2c6cdae..921c52e14c 100644
+--- a/runtime/jiacheng_profiler.cc
++++ b/runtime/jiacheng_profiler.cc
+@@ -1,8 +1,11 @@
+ #include "jiacheng_profiler.h"
+ #include "jiacheng_utils.h"
+ #include "jiacheng_debug.h"
++#include "jiacheng_hack.h"
++#include "jiacheng_common.h"
+ 
+ #include "thread-inl.h"
++#include "mirror/object.h"
+ 
+ namespace art {
+ namespace jiacheng {
+@@ -25,7 +28,9 @@ Profiler::Profiler():
+     during_gc_flag_(false),
+     perceptible_flag_(true),
+     gc_number_(0),
+-    start_time_(0) {
++    start_time_(0),
++    current_time_(1000),
++    background_time_(0) {
+ }
+ 
+ Profiler::~Profiler() = default;
+@@ -84,6 +89,8 @@ bool Profiler::TestInAccessWS(mirror::Object* obj) {
+     // read_working_set_lock_.ExclusiveLock(self);
+     // bool result = (read_working_set_.find(obj) != read_working_set_.end());
+     // read_working_set_lock_.ExclusiveUnlock(self);
++
++    // return access_bloom_filter_.Check(reinterpret_cast<uint64_t>(obj)) || obj->GetAccess();
+     return access_bloom_filter_.Check(reinterpret_cast<uint64_t>(obj));
+ }
+ 
+@@ -116,11 +123,11 @@ bool Profiler::TestInGcWS(mirror::Object* obj) {
+ }
+ 
+ void Profiler::SetDuringGcFlag() {
+-    during_gc_flag_.store(1);
++    during_gc_flag_.store(true);
+ }
+ 
+ void Profiler::ClearDuringGcFlag() {
+-    during_gc_flag_.store(0);
++    during_gc_flag_.store(false);
+ }
+ 
+ // bool Profiler::GetDuringGcFlag() {
+@@ -128,30 +135,66 @@ void Profiler::ClearDuringGcFlag() {
+ // }
+ 
+ void Profiler::SetPerceptibleFlag() {
+-    perceptible_flag_.store(1);
++    perceptible_flag_.store(true);
+ }
+ 
+ void Profiler::ClearPerceptibleFlag() {
+-    perceptible_flag_.store(0);
++    perceptible_flag_.store(false);
+ }
+ 
+ bool Profiler::GetPerceptibleFlag() {
+     return perceptible_flag_.load();
+ }
+ 
++void Profiler::SetSwitchingFlag() {
++    switching_flag_.store(true);
++}
++
++void Profiler::ClearSwitchingFlag() {
++    switching_flag_.store(false);
++}
++
++bool Profiler::GetSwitchingFlag() {
++    return switching_flag_.load();
++}
++
+ bool Profiler::ShouldSwapOut(mirror::Object* obj) {
+-    // jiacheng debug start
++    if (!obj) {
++        return false;
++    }
+     if(!IsWhiteApp()) {
+         return false;
+     }
+     if (GetPerceptibleFlag()) {
+         return false;
+     }
+-    return !TestInAccessWS(obj);
+-
+-    // (void)obj;
+-    // return false;
+-    // jiacheng debug end
++    if (!ObjectIsSwappableType(obj)) {
++        return false;
++    }
++    // if (current_time_-background_time_ <= 0) {
++    //     return false;
++    // }
++    uint16_t foreground_access_record = obj->GetForegroundAccessRecord();
++    uint16_t background_access_record = obj->GetBackgroundAccessRecord();
++    uint16_t switching_access_record = obj->GetSwitchAccessRecord();
++
++    // LOG(INFO) << "jiacheng debug jiacheng_profiler.cc 161 ShouldSwapOut() "
++    //           << " foreground_access_record= " << foreground_access_record
++    //           << " background_access_record= " << background_access_record
++    //           << " switching_access_record= " << switching_access_record
++    //           << " background_time_= " << background_time_
++    //           << " switching_time_= " << switching_time_
++    //           << " GetCurrentTime()= " << GetCurrentTime();
++    
++    uint16_t foreground_distance = background_time_ - foreground_access_record;
++    uint16_t background_distance = current_time_ - background_access_record;
++    bool foreground_ws = RESERVE_FOREGROUND_WS_FLAG && (foreground_distance < FOREGROUND_WS_WINDOW_SIZE);
++    bool background_ws = (background_distance < BACKGROUND_WS_WINDOW_SIZE);
++    bool switching_ws = RESERVE_SWITCHING_WS_FLAG && (switching_access_record != 0);
++    if (foreground_ws || background_ws || switching_ws) {
++        return false;
++    } 
++    return true;
+ }
+ 
+ void Profiler::IncreaseGcNumber() {
+@@ -162,7 +205,6 @@ uint32_t Profiler::GetGcNumber() {
+     return gc_number_.load();
+ }
+ 
+-
+ void Profiler::SetStartTime(uint64_t start_time) {
+     start_time_.store(start_time);
+ }
+@@ -170,6 +212,34 @@ void Profiler::SetStartTime(uint64_t start_time) {
+ uint64_t Profiler::GetStartTime() {
+     return start_time_.load();
+ }
++
++void Profiler::SetCurrentTime(uint16_t current_time) {
++    current_time_.store(current_time);
++}
++
++void Profiler::IncreaseCurrentTime() {
++    current_time_.fetch_add(1);
++}
++
++uint16_t Profiler::GetCurrentTime() {
++    return current_time_.load();
++}
++
++void Profiler::SetBackgroundTime(uint16_t background_time) {
++    background_time_.store(background_time);
++}
++
++uint16_t Profiler::GetBackgroundTime() {
++    return background_time_.load();
++}
++
++void Profiler::SetSwitchingTime(uint16_t switching_time) {
++    switching_time_.store(switching_time);
++}
++
++uint16_t Profiler::GetSwitchingTime() {
++    return switching_time_.load();
++}
+  
+ } // namespace jiacheng
+ } // namespace art
+\ No newline at end of file
+diff --git a/runtime/jiacheng_profiler.h b/runtime/jiacheng_profiler.h
+index 500cbd55c7..70c2d370fc 100644
+--- a/runtime/jiacheng_profiler.h
++++ b/runtime/jiacheng_profiler.h
+@@ -52,6 +52,10 @@ public:
+     void ClearPerceptibleFlag();
+     bool GetPerceptibleFlag();
+ 
++    void SetSwitchingFlag();
++    void ClearSwitchingFlag();
++    bool GetSwitchingFlag();
++
+     bool ShouldSwapOut(mirror::Object* obj);
+ 
+     void IncreaseGcNumber();
+@@ -60,6 +64,16 @@ public:
+     void SetStartTime(uint64_t start_time);
+     uint64_t GetStartTime();
+ 
++    void SetCurrentTime(uint16_t current_time);
++    void IncreaseCurrentTime();
++    uint16_t GetCurrentTime();
++
++    void SetBackgroundTime(uint16_t background_time);
++    uint16_t GetBackgroundTime();
++
++    void SetSwitchingTime(uint16_t switching_time);
++    uint16_t GetSwitchingTime();
++
+ private:
+     // Mutator的Working Set
+     BloomFilter access_bloom_filter_;
+@@ -83,12 +97,20 @@ private:
+     // APP当前在前台还是后台
+     std::atomic<bool> perceptible_flag_;
+ 
++    // set in UpdateProcessState(), clear in main thread
++    std::atomic<bool> switching_flag_; 
++
+     // 历史GC发生的总次数
+     std::atomic<uint32_t> gc_number_;
+ 
+     std::atomic<uint64_t> start_time_;
+ 
++    std::atomic<uint16_t> current_time_;
++
++    std::atomic<uint16_t> background_time_;
+ 
++    // Update in UpdateProcessState() function
++    std::atomic<uint16_t> switching_time_; 
+ };
+ 
+ }
+diff --git a/runtime/jiacheng_swapper.cc b/runtime/jiacheng_swapper.cc
+index 9755a4688c..71ab931919 100644
+--- a/runtime/jiacheng_swapper.cc
++++ b/runtime/jiacheng_swapper.cc
+@@ -3,6 +3,7 @@
+ #include "jiacheng_profiler.h"
+ #include "jiacheng_utils.h"
+ #include "jiacheng_debug.h"
++#include "jiacheng_common.h"
+ 
+ #include "thread-inl.h"
+ #include "runtime.h"
+@@ -47,27 +48,31 @@ Swapper::~Swapper() = default;
+ 
+ 
+ void Swapper::Run() {
++    uint32_t swapout_time = 0;
+     Profiler* profiler = Profiler::Current();
+     bool gc_flag, perceptible_flag;
++
+     while (true) {
+-        CurrentThreadSleepSecond(30);
++        ++swapout_time;
++        CurrentThreadSleepSecond(CLOCK_TICK);
++        profiler->IncreaseCurrentTime();
++
++        // handle switching flag
++        uint16_t current_time = profiler->GetCurrentTime();
++        uint16_t switching_time = profiler->GetSwitchingTime();
++        if (profiler->GetSwitchingFlag()) {
++            if (current_time - switching_time >= SWITCHING_WINDOW_SIZE) {
++                profiler->ClearSwitchingFlag();
++            }
++        }
++
+         gc_flag = profiler->GetDuringGcFlag();
+         perceptible_flag = profiler->GetPerceptibleFlag();
+-        LOG(INFO) << "jiacheng jiacheng_swapper.cc 43 Run() swapper thread" 
+-                  << " gc_flag= " << gc_flag
+-                  << " perceptible_flag= " << perceptible_flag
+-                  ;
+-        if (!gc_flag && !perceptible_flag) {
+-            // jiacheng debug start
+-            // SwapOutHeap();
+-            // jiacheng debug end
+-        }
+-        profiler->JiachengDebug();
+-        profiler->ClearAccessWS();
+ 
+-        // jiacheng debug start
+-        // ClearAndPrintWorkingSet();
+-        // jiacheng debug end
++        if (ACTIVE_SWAPOUT && !gc_flag && !perceptible_flag && swapout_time>=SWAPOUT_WINDOW_SIZE) {
++            swapout_time = 0;
++            SwapOutHeap();
++        }
+     }
+ }
+ 
+@@ -141,7 +146,6 @@ void Swapper::SwapOutMallocSpace(gc::space::MallocSpace* space) {
+     (void)space;
+     CHECK(space == Runtime::Current()->GetHeap()->GetNonMovingSpace());
+     LOG(INFO) << "jiacheng jiacheng_swapper.cc 144 SwapOutMallocSpace()";
+-    // madvise(space->Begin(), space->Size(), 233);
+     WalkCallback walk_callback = [](void* start, void* end, size_t /*num_bytes*/, void* ) {
+         if (start != end) {
+             jiacheng::SwapOutRange(start, reinterpret_cast<size_t>(end) - reinterpret_cast<size_t>(start));
+@@ -156,16 +160,15 @@ void Swapper::SwapOutZygoteSpace(gc::space::ZygoteSpace* space) {
+     // jiacheng::SwapOutRange(space->Begin(), space->Size());
+ }
+ 
+-void Swapper::SwapOutBumpPointerSpace(gc::space::BumpPointerSpace* space ATTRIBUTE_UNUSED) {
++void Swapper::SwapOutBumpPointerSpace(gc::space::BumpPointerSpace* space) {
++    (void)space;
+     UNIMPLEMENTED(FATAL);
+ }
+ 
+ void Swapper::SwapOutLargeObjectSpace(gc::space::LargeObjectSpace* space) {
+-    (void)space;
+     LOG(INFO) << "jiacheng jiacheng_swapper.cc 144 SwapOutLargeObjectSpace()";
+     WalkCallback walk_callback = [](void* start, void* end, size_t /*num_bytes*/, void* ) {
+         if (start != end) {
+-            // LOG(INFO) << "jiacheng SwapOutLargeObjectSpace() obj= " << size_t(start) << " size= " << size_t(end) - size_t(start);
+             jiacheng::SwapOutRange(start, reinterpret_cast<size_t>(end) - reinterpret_cast<size_t>(start));
+         }
+     };
+@@ -173,7 +176,6 @@ void Swapper::SwapOutLargeObjectSpace(gc::space::LargeObjectSpace* space) {
+ }
+ 
+ void Swapper::SwapOutRegionSpace(gc::space::RegionSpace* space) {
+-    (void)space;
+     LOG(INFO) << "jiacheng jiacheng_swapper.cc 144 SwapOutRegionSpace()";
+     space->SwapOutCold();
+ }
+diff --git a/runtime/jiacheng_swapper.h b/runtime/jiacheng_swapper.h
+index b0c88c8067..c860558282 100644
+--- a/runtime/jiacheng_swapper.h
++++ b/runtime/jiacheng_swapper.h
+@@ -55,6 +55,8 @@ private:
+     std::thread* swap_thread_;
+ };
+ 
++
++
+ } // namespace jiacheng
+ } // namespace art
+ 
+diff --git a/runtime/jiacheng_utils.cc b/runtime/jiacheng_utils.cc
+index adcde4f3ab..12c1b669a8 100644
+--- a/runtime/jiacheng_utils.cc
++++ b/runtime/jiacheng_utils.cc
+@@ -63,9 +63,9 @@ bool IsWhiteApp() {
+         "com.king.candycrushsaga",
+ 
+         "com.taobao.taobao", 
+-        "edu.washington.cs.nl35.memorywaster", 
+         "com.jiacheng.activitylifecycletest",
+ 
++        "edu.washington.cs.nl35.memorywaster", 
+         "edu.washington.cs.nl35.memorywaster1",
+         "edu.washington.cs.nl35.memorywaster2",
+         "edu.washington.cs.nl35.memorywaster3",
+diff --git a/runtime/jiacheng_utils.h b/runtime/jiacheng_utils.h
+index 13287135d8..0021e0f519 100644
+--- a/runtime/jiacheng_utils.h
++++ b/runtime/jiacheng_utils.h
+@@ -22,7 +22,6 @@ void PrintKernel(const std::string& info);
+ 
+ bool SwapOutRange(void* start, size_t size);
+ 
+-
+ } // namespace jiacheng
+ } // namespace art
+ 
+diff --git a/runtime/mirror/object-inl.h b/runtime/mirror/object-inl.h
+index b33b4fd5b5..b908c43a6a 100644
+--- a/runtime/mirror/object-inl.h
++++ b/runtime/mirror/object-inl.h
+@@ -630,7 +630,6 @@ inline void Object::SetFieldObjectWithoutWriteBarrier(MemberOffset field_offset,
+   VerifyTransaction<kTransactionActive, kCheckTransaction>();
+   // jiacheng start
+   jiacheng::JiachengBarrier(reinterpret_cast<uint64_t>(this));
+-  SetAccess();
+   // jiacheng end
+   if (kTransactionActive) {
+     ObjPtr<Object> obj;
+diff --git a/runtime/mirror/object-refvisitor-inl.h b/runtime/mirror/object-refvisitor-inl.h
+index f98c433cdd..3729f729b1 100644
+--- a/runtime/mirror/object-refvisitor-inl.h
++++ b/runtime/mirror/object-refvisitor-inl.h
+@@ -33,6 +33,9 @@ template <bool kVisitNativeRoots,
+           typename JavaLangRefVisitor>
+ inline void Object::VisitReferences(const Visitor& visitor,
+                                     const JavaLangRefVisitor& ref_visitor) {
++  // jiacheng start
++  jiacheng::JiachengBarrier(reinterpret_cast<uint64_t>(this));
++  // jiacheng end
+   visitor(this, ClassOffset(), /* is_static= */ false);
+   ObjPtr<Class> klass = GetClass<kVerifyFlags, kReadBarrierOption>();
+   const uint32_t class_flags = klass->GetClassFlags<kVerifyNone>();
+diff --git a/runtime/mirror/object.cc b/runtime/mirror/object.cc
+index a30b2499e4..227aa7f3d2 100644
+--- a/runtime/mirror/object.cc
++++ b/runtime/mirror/object.cc
+@@ -301,12 +301,50 @@ std::string Object::PrettyTypeOf() {
+ }
+ 
+ // jiacheng start
+-void Object::SetAccess() {
+-  Runtime* runtime = Runtime::Current();
+-  if ((!runtime->GetStartupCompleted()) || runtime->IsSystemServer()) return;
+-  // if (runtime->IsSystemServer()) return;
+-  z_zflags1_ = z_zflags1_ | 0x02;
++void Object::SetForegroundAccessRecord(uint16_t current_time) {
++  // Runtime* runtime = Runtime::Current();
++  // if ((!runtime->GetStartupCompleted()) || runtime->IsSystemServer()) return;
++  if (Runtime::Current()->IsSystemServer()) return;
++  foreground_access_record_ = current_time;
++}
++
++
++uint16_t Object::GetForegroundAccessRecord() {
++  // Runtime* runtime = Runtime::Current();
++  // if ((!runtime->GetStartupCompleted()) || runtime->IsSystemServer()) return 0;
++  if (Runtime::Current()->IsSystemServer()) return 0;
++  return foreground_access_record_;
++}
++
++void Object::SetBackgroundAccessRecord(uint16_t current_time) {
++  // Runtime* runtime = Runtime::Current();
++  // if ((!runtime->GetStartupCompleted()) || runtime->IsSystemServer()) return;
++  if (Runtime::Current()->IsSystemServer()) return;
++  background_access_record_ = current_time;
++}
++
++uint16_t Object::GetBackgroundAccessRecord() {
++  // Runtime* runtime = Runtime::Current();
++  // if ((!runtime->GetStartupCompleted()) || runtime->IsSystemServer()) return 0;
++  if (Runtime::Current()->IsSystemServer()) return 0;
++  return background_access_record_;
++}
++
++void Object::SetSwitchAccessRecord(uint16_t current_time) {
++  // Runtime* runtime = Runtime::Current();
++  // if ((!runtime->GetStartupCompleted()) || runtime->IsSystemServer()) return;
++  if (Runtime::Current()->IsSystemServer()) return;
++  switch_access_record_ = current_time;
+ }
++
++uint16_t Object::GetSwitchAccessRecord() {
++  // Runtime* runtime = Runtime::Current();
++  // if ((!runtime->GetStartupCompleted()) || runtime->IsSystemServer()) return 0;
++  if (Runtime::Current()->IsSystemServer()) return 0;
++  return switch_access_record_;
++}
++
++
+ // jiacheng end
+ 
+ }  // namespace mirror
+diff --git a/runtime/mirror/object.h b/runtime/mirror/object.h
+index 37a6596afc..32f9208c20 100644
+--- a/runtime/mirror/object.h
++++ b/runtime/mirror/object.h
+@@ -98,7 +98,17 @@ class MANAGED LOCKABLE Object {
+   }
+ 
+   // jiacheng start
+-  void SetAccess();
++  void SetForegroundAccessRecord(uint16_t current_time);
++
++  uint16_t GetForegroundAccessRecord();
++
++  void SetBackgroundAccessRecord(uint16_t current_time);
++
++  uint16_t GetBackgroundAccessRecord();
++
++  void SetSwitchAccessRecord(uint16_t current_time);
++
++  uint16_t GetSwitchAccessRecord();
+   // jiacheng end
+ 
+   template<VerifyObjectFlags kVerifyFlags = kDefaultVerifyFlags,
+@@ -370,9 +380,6 @@ class MANAGED LOCKABLE Object {
+     } else {
+       reinterpret_cast<Atomic<kType>*>(addr)->StoreJavaData(new_value);
+     }
+-    // jiacheng debug start
+-    SetAccess();
+-    // jiacheng debug end
+   }
+ 
+   template<typename kType, bool kIsVolatile>
+@@ -380,7 +387,6 @@ class MANAGED LOCKABLE Object {
+       REQUIRES_SHARED(Locks::mutator_lock_) {
+     // jiacheng start
+     jiacheng::JiachengBarrier(reinterpret_cast<uint64_t>(this));
+-    SetAccess();
+     // jiacheng end
+     const uint8_t* raw_addr = reinterpret_cast<const uint8_t*>(this) + field_offset.Int32Value();
+     const kType* addr = reinterpret_cast<const kType*>(raw_addr);
+@@ -793,11 +799,10 @@ class MANAGED LOCKABLE Object {
+   uint32_t monitor_;
+ 
+   // jiacheng start
+-  uint32_t z_padding_;
+-  uint8_t z_zflags0_;
+-  uint8_t z_zflags1_;
+-  uint8_t z_zflags2_;
+-  uint8_t z_zflags3_;
++  uint16_t foreground_access_record_;
++  uint16_t background_access_record_;
++  uint16_t switch_access_record_;
++  uint16_t padding_;
+   // jiacheng end
+ 
+ #ifdef USE_BROOKS_READ_BARRIER
+-- 
+2.34.1
+

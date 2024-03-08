@@ -1,0 +1,7 @@
+.vscode
+*.apk
+android-10/
+android-10-0/
+android-kernel/
+android-kernel-0/
+*.perfetto-trace

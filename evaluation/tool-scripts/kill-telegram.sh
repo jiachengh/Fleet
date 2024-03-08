@@ -1,0 +1,1 @@
+adb shell am force-stop 'org.telegram.messenger'

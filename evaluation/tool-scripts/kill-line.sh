@@ -1,0 +1,1 @@
+adb shell am force-stop 'jp.naver.line.android'
