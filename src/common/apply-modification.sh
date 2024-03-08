@@ -2,8 +2,16 @@
 
 # Please update this path based on the local environment
 # It should be the path to the downloaded AOSP
-AOSP_PATH=/media/jiacheng/DATA3/Pixel3/android-10/android-10
 
-cp ./device.mk $AOSP_PATH/device/google/crosshatch/device.mk
-cp ./privapp-permissions-platform.xml $AOSP_PATH/frameworks/base/data/etc/privapp-permissions-platform.xml 
-cp ./lmkd.c $AOSP_PATH/system/core/lmkd/lmkd.c
+cp ./common/device.mk ../android-10/device/google/crosshatch/device.mk
+cp ./common/privapp-permissions-platform.xml ../android-10/frameworks/base/data/etc/privapp-permissions-platform.xml 
+cp ./common/lmkd.c ../android-10/system/core/lmkd/lmkd.c
+
+
+cp ./common/device.mk ../android-10-0/device/google/crosshatch/device.mk
+cp ./common/privapp-permissions-platform.xml ../android-10-0/frameworks/base/data/etc/privapp-permissions-platform.xml 
+cp ./common/lmkd.c ../android-10-0/system/core/lmkd/lmkd.c
+
+cp ./common/device.mk ../android-10-marvin/device/google/crosshatch/device.mk
+cp ./common/privapp-permissions-platform.xml ../android-10-marvin/frameworks/base/data/etc/privapp-permissions-platform.xml 
+cp ./common/lmkd.c ../android-10-marvin/system/core/lmkd/lmkd.c

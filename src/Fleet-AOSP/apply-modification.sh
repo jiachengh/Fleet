@@ -1,13 +1,11 @@
 #!/bin/bash
 
-# Please update this path based on the local environment
-# It should be the path to the downloaded AOSP
-AOSP_PATH=/media/jiacheng/DATA3/Pixel3/android-10/android-10
 
-rm -rf $AOSP_PATH/art
-cp -r ./art $AOSP_PATH
+rm -rf ../android-10/art
+cp -r ./Fleet-AOSP/art ../android-10
 
-cp -r ./Object.java $AOSP_PATH/libcore/ojluni/src/main/java/java/lang/Object.java
 
-cp ./ActivityThread.java $AOSP_PATH/frameworks/base/core/java/android/app/ActivityThread.java
+cp ./Fleet-AOSP/Object.java ../android-10/libcore/ojluni/src/main/java/java/lang/Object.java
+
+cp ./ActivityThread.java ../android-10/frameworks/base/core/java/android/app/ActivityThread.java
 

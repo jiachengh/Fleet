@@ -9,7 +9,7 @@ while [ $? -ne 0 ]; do
     $adb root > /dev/null 2>&1
 done
 $adb remount -R
-$adb push /media/jiacheng/DATA3/Pixel3/android-10/android-kernel/out/android-msm-pixel-4.9/dist/*.ko /vendor/lib/modules
+$adb push ./android-kernel/out/android-msm-pixel-4.9/dist/*.ko /vendor/lib/modules
 $adb disable-verity
 $adb reboot
 

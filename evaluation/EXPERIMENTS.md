@@ -24,7 +24,7 @@ After installing these apps, it is recommended that the user manually logs into 
 To configure the swap partition for both Fleet and the original Android, user can use the following commands:
 ```bash
 adb reboot # The swap partition cannot be reconfigured if it is in use.
-./fastboot-flash-swap.sh 
+./configure-flash-swap.sh 
 ```
 The swap partition configuration needs to be set up whenever the phone restarts.
 

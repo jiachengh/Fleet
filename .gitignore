@@ -2,6 +2,7 @@
 *.apk
 android-10/
 android-10-0/
+android-10-marvin/
 android-kernel/
 android-kernel-0/
 *.perfetto-trace
