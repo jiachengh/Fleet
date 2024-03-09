@@ -4,59 +4,114 @@
 
 
 ## **Pre-experiment: Install apps and configure the swap partition**
-Install the Google services framework:
+
+**Download APKs.** To download the APKs, we have provided all the APK files on OneDrive due to the file size restriction on GitHub. Users can download the pre-built images from the [onedrive link](https://portland-my.sharepoint.com/:f:/g/personal/jiachuang6-c_my_cityu_edu_hk/EgoDgVPRKxJPuvTVg7LsfKsBSZPqPIuMUzP6-CB2MSqG4g?e=zviP6A).
+In the shared folder, you will find a file named `APK.zip`. 
+This file contains the installation packages of all the tested apps and the Google Services Framework. To access the APK files, users can download the  `APK.zip` file, decompress it, and find all the APKs located in the `evaluation/APK/` folder.
+
+**Install APKs.** Install the Google services framework:
 ```bash
 cd evaluation
 ./install-apk/fastboot-google.sh
-# It will reboot the system and install the Google services related packages
-./install-apk/fastboot-google.sh # If there is an error the first time, execute it twice
+# This will reboot the system and install the Google services related packages
+./install-apk/fastboot-google.sh # If an error occurs the first time, execute it twice
 ```
 
-We also provide some scripts to install the tested apps more easilier:
+We also provide some scripts to make the installation of the tested apps easier:
 ```bash
 ./install-apk/install-all.sh
-# Or install app individually, with install-<app name>.sh
+# Alternatively, you can install each app individually using install-<app name>.sh
 ./install-apk/install-amazon.sh
 ./install-apk/install-facebook.sh
 ```
-After installing these apps, it is recommended that the user manually logs into their account and completes the initialization of each app.
+After installing these apps, it is recommended that the user manually logs into their account and completes the initialization process for each app.
 
-To configure the swap partition for both Fleet and the original Android, user can use the following commands:
+**Configure the swap partition.**
+To configure the swap partition for both Fleet and the original Android, users can use the following commands:
 ```bash
 adb reboot # The swap partition cannot be reconfigured if it is in use.
 ./configure-flash-swap.sh 
 ```
 The swap partition configuration needs to be set up whenever the phone restarts.
 
+## **Experiment-0: Functional verification**
+After users have installed and configured all prerequisites, it is easy to verify the functionality through the Android logs. Users can output the logs in the console using the following commands:
+```bash
+adb logcat -c
+adb logcat | grep jiacheng
+```
+Then the user can open an app, use it for a while, and switch the app to the background. After the app is switched to the background, the components of Fleet can be verified in the console.
+
+**1. Runtime-guided swap (Section 5.3 in the paper)**
+
+Users can observe the operations of the runtime-guided swap (RGS) after the app is switched to the background. The logs below show the RGS utilizing a garbage collector (GC) to retrieve all near root objects (NRO) through a breadth-first search (BFS)-based GC. Each line in the logs presents two results:
+
+- `push_on_mark_stack_num`: The number of objects that have been visited during the BFS procedure.
+- `depth`: The distance between the currently visiting objects and the roots.
+
+Based on this information, the RGS can find the NRO and group them together. This data also corresponds to Figure 6b and Figure 10 in our paper.
+
+<img src="exp-hot-launch/runtime-guided-swap-NRO.png" width="650">
+
+
+After the BFS-based GC, the RGS will group objects with different types into different regions. The following logs can be observed in the console.
+In the log line beginning with `RegionSpace::Debug()`,  there are four types of regions described in Section 5.3.1 of our paper:
+
+- `launch_region_num`: The number of *launch region* .
+- `working_set_num`: The number of *working set region*.
+- `cold_region_num`: The number of *cold region*.
+
+<img src="exp-hot-launch/runtime-guided-swap-Object-Grouping.png" width="1100">
+
+Therefore, users can verify the function of RGS by observing the logs as shown above.
+
+
+
+**2. Background-object GC (Section 5.2 in the paper)**
+
+After the RGS is finished, the app will use the background-object GC (BGC) to manage memory when the app is in the background. The BGC utilizes a new card table to collect the garbage objects allocated in the background and minimize access to other objects.
+
+Users can also obtain information about the effectiveness of BGC from the logs, as shown in the following logs. Users can get the card table visiting information from the log, such as the log containing the `card_scan_num2` keyword. This data represents how many cards are visited during the BGC (as shown in Figure 9 in our paper).
+
+
+To verify the effectiveness of BGC, users can observe the value after `GcWs=`. It represents how many objects are visited due to the GC. Users can also find the total number of objects, which is approximately the value after the `region_space->GetObjectsAllocated()=` keywords.
+As shown in the following logs, the number of objects visited during the GC is 24092, and the total number of objects is 287994. Therefore, the BGC visits approximately 1/10 of the total objects (Figure 12 in our paper).
+
+
+Hence, users can verify the functionality of BGC by observing these logs.
+
+<img src="exp-cache-app/BGC.png" width="1100">
+
+
+
 
 ## **Experiment-1: App caching capacity and GC working set**
-All the relevant files are located in the `evaluation/exp-cache-app` directory in which there are some scripts and Jupyter notebooks.
+All the relevant files are located in the `evaluation/exp-cache-app` directory, which contains scripts and Jupyter notebooks.
 
 
 **Caching commercial apps (Figure 11c).**
-First, run the following command in the terminal from the `evaluation` folder:
+To begin, run the following command in the terminal from the  `evaluation` folder:
 ```bash
 python ./exp-cache-app/run-cache-commercial.py
 ```
-The script launches apps continuously and automatically counts the number of active apps.
-There is a `MANUAL_INTERACTION` variable in the Python script.
-If the variable is set to `False`, it will automatically swipe the screen to simulate human usage with the app.
+This script launches apps continuously and automatically counts the number of active apps.
+<!-- There is a `MANUAL_INTERACTION` variable in the Python script.
+If the variable is set to `False`, it will automatically swipe the screen to simulate human usage of the app. -->
 The number of active apps can be seen in the console output log after the `CachingNUM=` keyword.
 
 
 We execute the same script test on Fleet and different baseline Android systems to start the same sequence of apps consecutively in the same way, in order to obtain the number of cached apps for the different methods (identified by the `CachingNUM=` keyword in the console).
-When the script finished, it will print the summary of cached app number in the last line (begin with `cached_numbers=`).
+Once the script finishes, it will print the summary of cached app numbers in the last line (beginning with `cached_numbers=`).
 
 
-Finially, we can paste these sequences of the number of cached apps into the drawing block in `exp-run-caching-commercial.ipynb` to generate the final result graph.
+Finally, we can paste these sequences of the number of cached apps into the drawing block in `exp-run-caching-commercial.ipynb` to generate the final result graph.
 
 
 ## **Experiment-2: GC working set while the app is in the background.**
-This result requires additional profile information, which can be obtained by enabling the debug flag before compiling Fleet
-Therefore, users need to rebuild Fleet to enable profile information.
-To do this, we need to (1) modify the source code by commenting out the `#undef JIACHENG_DEBUG` line in the `runtime/jiacheng_debug.h` file; (2)  (for other experiments, the debug flag should be false).
+This result requires additional profile information, which can be obtained by enabling the debug flag before compiling Fleet. Therefore, users need to rebuild Fleet to enable profile information. 
+To do this, we need to (1) modify the source code by commenting out the `#undef JIACHENG_DEBUG` line in the `runtime/jiacheng_debug.h` file; (2) add object header in the `libcore/ojluni/src/main/java/java/lang/Object.java` file (for other experiments, the debug flag should be set to false).
 
-Additionally, we need to test the Fleet in two configurations: (1) enabling BGC and (2) disabling BGC.
+Additionally, we need to test Fleet in two configurations: (1) enabling BGC and (2) disabling BGC.
 To enable BGC, we need to set the `ENABLE_BGC` variable to `true` and rebuild the Fleet.
 To disable BGC, we need to set the `ENABLE_BGC` variable to `false` and rebuild Fleet.
 (The paper, we have one more configuration, which is the original Android. It can be configured by setting `ENABLE_APGC`, `ENABLE_NRO`, `ENABLE_FYO`, and `ENABLE_BGC` all to `false` in the `runtime/jiacheng_debug.h` file.)
@@ -176,14 +231,16 @@ Fleet have faster hot launch performance than original Android. -->
 ## **Experiment-4: Runtime performance**
 In the `evaluation/exp-runtime-performance` folder, we provide some jupyter notebooks and scrpts to measure the runtime performance including the CPU overhead and frame rendering performance.
 
-In order to do that, an important thing is to capture a trace on the mobile device. We use the 
+In order to do that, an important thing is to capture a trace on the mobile device. 
+We use the the system trace tool to cacpture the runtime trace, which can be easily to capture the tracing by click the icon in tool bar as shown in the figure:
 
 <img src="exp-runtime-performance/system-tracing.jpg" width="200">
 
-[system tracing document.](https://developer.android.com/topic/performance/tracing/on-device)
+User can refer to the 
+[system tracing document](https://developer.android.com/topic/performance/tracing/on-device) to know how to enabeling the system trace funciton in the Android device.
 
-The captured traces are saved in the `/data/local/traces` path of the device.
-We provide the `trace-pull.sh` script to help user to fetch traces from device to the host machine.
+After the tracing procedure, the captured traces are saved in the `/data/local/traces` path of the device.
+The artifact provides the `trace-pull.sh` script to help user to fetch traces from device to the host machine.
 
 
 To obtain the runtime information of apps, the experiments mainly consist of two steps:
@@ -192,20 +249,30 @@ To obtain the runtime information of apps, the experiments mainly consist of two
 
 
 **CPU overhead.**
-First, users should turn on the `system trace` while simultaneously executing `run-once-cpu.py`.
+First, users should turn on the `system trace` while simultaneously executing:
+```bash
+python ./exp-runtime-performance/run-cpu.py
+```
+ 
 When the Python script finishes, please close the `system trace` and fetch the captured trace from the mobile device to the development workstation. 
 After obtaining the trace file, we update the `TRACE_PATH` variable in the `exp-runtime-performance.ipynb` notebook.
 Finally, we execute the remaining blocks of the notebook, which analyze the trace file using Perfetto and output the CPU usage result in the last code block.
 
 
 **Jank ration and FPS (Figure 14).**
-Similarly, we start the system trace tool while initiating the `run-once-foreground.py` script.
+Similarly, we start the system trace tool while initiating the `run-once-foreground.py` script:
+```bash
+python ./exp-runtime-performance/run-foreground.py
+```
 After the script finishes, we close the system trace and fetch the trace file from the device.
 Then, we use the `exp-runtime-performance.ipynb` notebook to analyze the trace by updating the `TRACE_PATH` to the trace file.
 After running all the blocks in the notebook, it will generate the jank ratio and FPS results. 
+
 We then paste these results into the `exp-runtime-performance-plot.ipynb` notebook which incorporates the script to plot the resulting figure.
 
 
 <!-- **Expected Results:** -->
 
-<!-- ## **Experiment customization** -->
+<!-- ## **Experiment customization**
+
+**Use other apps.** -->

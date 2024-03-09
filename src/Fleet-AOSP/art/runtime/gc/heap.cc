@@ -3718,9 +3718,21 @@ void Heap::GrowForUtilization(collector::GarbageCollector* collector_ran,
   // Use the multiplier to grow more for foreground.
   const double multiplier = HeapGrowthMultiplier();  // Use the multiplier to grow more for
   // foreground.
+  // jiacheng start
+  // const size_t adjusted_min_free = static_cast<size_t>(min_free_ * multiplier);
+  // const size_t adjusted_max_free = static_cast<size_t>(max_free_ * multiplier);
+  // if (gc_type != collector::kGcTypeSticky) {
+
+  // Because background GC is lightweight now, we can perform it more frequently to collect garbage in a timely manner
   const size_t adjusted_min_free = static_cast<size_t>(min_free_ * multiplier);
-  const size_t adjusted_max_free = static_cast<size_t>(max_free_ * multiplier);
-  if (gc_type != collector::kGcTypeSticky) {
+  size_t adjusted_max_free = static_cast<size_t>(max_free_ * multiplier);
+  bool goto_sticky = !CareAboutPauseTimes() && jiacheng::IsWhiteApp();
+  if (goto_sticky) {
+    // adjusted_max_free = adjusted_max_free / 20;
+    adjusted_max_free = adjusted_max_free / 15;
+  }
+  if (gc_type != collector::kGcTypeSticky && !goto_sticky) {
+  // jiacheng end
     // Grow the heap for non sticky GC.
     uint64_t delta = bytes_allocated * (1.0 / GetTargetHeapUtilization() - 1.0);
     DCHECK_LE(delta, std::numeric_limits<size_t>::max()) << "bytes_allocated=" << bytes_allocated
@@ -3766,6 +3778,11 @@ void Heap::GrowForUtilization(collector::GarbageCollector* collector_ran,
       target_size = std::max(bytes_allocated, target_footprint);
     }
   }
+  // jiacheng start
+  LOG(INFO) << "jiacheng Heap::GrowForUtilization()"
+            << " goto_sticky= " << goto_sticky
+            << " target_size= " << target_size;
+  // jiacheng end
   CHECK_LE(target_size, std::numeric_limits<size_t>::max());
   if (!ignore_target_footprint_) {
 
