@@ -34,9 +34,10 @@ def start_twitter():
     return result
 
 def use_app_twitter(duration, period=0):
-    use_phone_always_swipe_up(duration=duration/3, period=period)
     use_phone_always_swipe_up_fast(duration=duration/3, period=period)
     use_phone_always_swipe_up_and_down(duration=duration/3, period=period)
+    use_phone_always_swipe_up(duration=duration/3, period=period)
+
 
 
 def start_facebook():
@@ -45,9 +46,9 @@ def start_facebook():
     return result
 
 def use_app_facebook(duration, period=0):
-    use_phone_always_swipe_up(duration=duration/3, period=period)
     use_phone_always_swipe_up_fast(duration=duration/3, period=period)
     use_phone_always_swipe_up_and_down(duration=duration/3, period=period)
+    use_phone_always_swipe_up(duration=duration/3, period=period)
 
 
 def start_instagram():
@@ -56,9 +57,9 @@ def start_instagram():
     return result
 
 def use_app_instagram(duration, period=0):
-    use_phone_always_swipe_up(duration=duration/3, period=period)
     use_phone_always_swipe_up_fast(duration=duration/3, period=period)
     use_phone_always_swipe_up_and_down(duration=duration/3, period=period)
+    use_phone_always_swipe_up(duration=duration/3, period=period)
 
 
 def start_telegram():
@@ -67,9 +68,9 @@ def start_telegram():
     return result
 
 def use_app_telegram(duration, period=0):
-    use_phone_always_swipe_up(duration=duration/3, period=period)
     use_phone_always_swipe_up_fast(duration=duration/3, period=period)
     use_phone_always_swipe_up_and_down(duration=duration/3, period=period)
+    use_phone_always_swipe_up(duration=duration/3, period=period)
 
 
 def start_line():
@@ -78,9 +79,9 @@ def start_line():
     return result
 
 def use_app_line(duration, period=0):
-    use_phone_always_swipe_up(duration=duration/3, period=period)
     use_phone_always_swipe_up_fast(duration=duration/3, period=period)
     use_phone_always_swipe_up_and_down(duration=duration/3, period=period)
+    use_phone_always_swipe_up(duration=duration/3, period=period)
 
 
 def start_youtube():
@@ -89,9 +90,9 @@ def start_youtube():
     return result
 
 def use_app_youtube(duration, period=0):
-    use_phone_always_swipe_up(duration=duration/3, period=period)
     use_phone_always_swipe_up_fast(duration=duration/3, period=period)
     use_phone_always_swipe_up_and_down(duration=duration/3, period=period)
+    use_phone_always_swipe_up(duration=duration/3, period=period)
 
 
 def start_tiktok():
@@ -101,9 +102,9 @@ def start_tiktok():
 
 
 def use_app_tiktok(duration, period=0):
-    use_phone_always_swipe_up(duration=duration/3, period=period)
     use_phone_always_swipe_up_fast(duration=duration/3, period=period)
     use_phone_always_swipe_up_and_down(duration=duration/3, period=period)
+    use_phone_always_swipe_up(duration=duration/3, period=period)
 
 
 def start_spotify():
@@ -113,9 +114,9 @@ def start_spotify():
 
 
 def use_app_spotify(duration, period=0):
-    use_phone_always_swipe_up(duration=duration/3, period=period)
     use_phone_always_swipe_up_fast(duration=duration/3, period=period)
     use_phone_always_swipe_up_and_down(duration=duration/3, period=period)
+    use_phone_always_swipe_up(duration=duration/3, period=period)
 
 
 def start_twitch():
@@ -124,9 +125,9 @@ def start_twitch():
     return result
 
 def use_app_twitch(duration, period=0):
-    use_phone_always_swipe_up(duration=duration/3, period=period)
     use_phone_always_swipe_up_fast(duration=duration/3, period=period)
     use_phone_always_swipe_up_and_down(duration=duration/3, period=period)
+    use_phone_always_swipe_up(duration=duration/3, period=period)
 
 
 
@@ -136,9 +137,9 @@ def start_rave():
     return result
 
 def use_app_rave(duration, period=0):
-    use_phone_always_swipe_up(duration=duration/3, period=period)
     use_phone_always_swipe_up_fast(duration=duration/3, period=period)
     use_phone_always_swipe_up_and_down(duration=duration/3, period=period)
+    use_phone_always_swipe_up(duration=duration/3, period=period)
 
 
 def start_bigolive():
@@ -147,9 +148,9 @@ def start_bigolive():
     return result
 
 def use_app_bigolive(duration, period=0):
-    use_phone_always_swipe_up(duration=duration/3, period=period)
     use_phone_always_swipe_up_fast(duration=duration/3, period=period)
     use_phone_always_swipe_up_and_down(duration=duration/3, period=period)
+    use_phone_always_swipe_up(duration=duration/3, period=period)
 
 
 def start_amazon():
@@ -158,9 +159,9 @@ def start_amazon():
     return result
 
 def use_app_amazon(duration, period=0):
-    use_phone_always_swipe_up(duration=duration/3, period=period)
     use_phone_always_swipe_up_fast(duration=duration/3, period=period)
     use_phone_always_swipe_up_and_down(duration=duration/3, period=period)
+    use_phone_always_swipe_up(duration=duration/3, period=period)
 
 
 def start_googlemaps():
@@ -169,9 +170,9 @@ def start_googlemaps():
     return result
 
 def use_app_googlemaps(duration, period=0):
-    use_phone_always_swipe_up(duration=duration/3, period=period)
     use_phone_always_swipe_up_fast(duration=duration/3, period=period)
     use_phone_always_swipe_up_and_down(duration=duration/3, period=period)
+    use_phone_always_swipe_up(duration=duration/3, period=period)
 
 
 def start_chrome():
@@ -180,9 +181,9 @@ def start_chrome():
     return result
 
 def use_app_chrome(duration, period=0):
-    use_phone_always_swipe_up(duration=duration/3, period=period)
     use_phone_always_swipe_up_fast(duration=duration/3, period=period)
     use_phone_always_swipe_up_and_down(duration=duration/3, period=period)
+    use_phone_always_swipe_up(duration=duration/3, period=period)
 
 
 def start_firefox():
@@ -191,9 +192,9 @@ def start_firefox():
     return result
 
 def use_app_firefox(duration, period=0):
-    use_phone_always_swipe_up(duration=duration/3, period=period)
     use_phone_always_swipe_up_fast(duration=duration/3, period=period)
     use_phone_always_swipe_up_and_down(duration=duration/3, period=period)
+    use_phone_always_swipe_up(duration=duration/3, period=period)
 
 
 def start_linkedin():
@@ -202,9 +203,9 @@ def start_linkedin():
     return result
 
 def use_app_linkedin(duration, period=0):
-    use_phone_always_swipe_up(duration=duration/3, period=period)
     use_phone_always_swipe_up_fast(duration=duration/3, period=period)
     use_phone_always_swipe_up_and_down(duration=duration/3, period=period)
+    use_phone_always_swipe_up(duration=duration/3, period=period)
 
 
 def start_angrybirds():
@@ -213,9 +214,9 @@ def start_angrybirds():
     return result
 
 def use_app_angrybirds(duration, period=0):
-    use_phone_always_swipe_up(duration=duration/3, period=period)
     use_phone_always_swipe_up_fast(duration=duration/3, period=period)
     use_phone_always_swipe_up_and_down(duration=duration/3, period=period)
+    use_phone_always_swipe_up(duration=duration/3, period=period)
 
 
 def start_candycrush():
@@ -225,9 +226,9 @@ def start_candycrush():
 
 
 def use_app_candycrush(duration, period=0):
-    use_phone_always_swipe_up(duration=duration/3, period=period)
     use_phone_always_swipe_up_fast(duration=duration/3, period=period)
     use_phone_always_swipe_up_and_down(duration=duration/3, period=period)
+    use_phone_always_swipe_up(duration=duration/3, period=period)
 
 
 def start_all_apps(duration=10):

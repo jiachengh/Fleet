@@ -7,9 +7,9 @@ sys.path.append('tool-scripts')
 
 import use_utils
 
-USE_DURATION = 5  # default 30
+USE_DURATION = 30  # default 30
 IF_KILL_ALL = True
-MANUAL_INTERACTION = True # default True
+MANUAL_INTERACTION = False # default True
 
 if IF_KILL_ALL:
     use_utils.kill_all_apps()

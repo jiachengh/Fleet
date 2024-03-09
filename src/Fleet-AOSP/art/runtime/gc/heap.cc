@@ -1000,13 +1000,16 @@ void Heap::ThreadFlipEnd(Thread* self) {
 void Heap::UpdateProcessState(ProcessState old_process_state, ProcessState new_process_state) {
   // jiacheng start
   const bool is_white_app = jiacheng::IsWhiteApp();
+  bool real_state_change = false;
   if (is_white_app) {
     if (new_process_state == kProcessStateJankImperceptible &&
         GetPerceptibleFlag()) {
+      real_state_change = true;
       ForeToBack();
     } else if (new_process_state == kProcessStateJankPerceptible && 
                !GetPerceptibleFlag()) {
       BackToFore();
+      real_state_change = true;
     }
   }
   // jiacheng end
@@ -1041,8 +1044,11 @@ void Heap::UpdateProcessState(ProcessState old_process_state, ProcessState new_p
       //                            kStressCollectorTransition
       //                                ? 0
       //                                : kCollectorTransitionWait);
-      if (jiacheng::ENABLE_APGC && is_white_app) {
-        RequestRelocateHotness(jiacheng::WINDOW_SIZE_BACKGROUND_WS * 1e9);
+      // It could be: (1) start in background state; (2) switch to the background during launch; 
+      if (is_white_app) {
+        if (jiacheng::ENABLE_APGC && !GetHotLaunchFlag() && real_state_change) {
+          RequestRelocateHotness(jiacheng::WINDOW_SIZE_BACKGROUND_WS * 1e9);
+        }
       } else {
         RequestCollectorTransition(background_collector_type_,
                                    kStressCollectorTransition ? 0 : kCollectorTransitionWait);
@@ -3729,7 +3735,7 @@ void Heap::GrowForUtilization(collector::GarbageCollector* collector_ran,
   bool goto_sticky = !CareAboutPauseTimes() && jiacheng::IsWhiteApp();
   if (goto_sticky) {
     // adjusted_max_free = adjusted_max_free / 20;
-    adjusted_max_free = adjusted_max_free / 15;
+    adjusted_max_free = adjusted_max_free / 10;
   }
   if (gc_type != collector::kGcTypeSticky && !goto_sticky) {
   // jiacheng end
@@ -3778,11 +3784,6 @@ void Heap::GrowForUtilization(collector::GarbageCollector* collector_ran,
       target_size = std::max(bytes_allocated, target_footprint);
     }
   }
-  // jiacheng start
-  LOG(INFO) << "jiacheng Heap::GrowForUtilization()"
-            << " goto_sticky= " << goto_sticky
-            << " target_size= " << target_size;
-  // jiacheng end
   CHECK_LE(target_size, std::numeric_limits<size_t>::max());
   if (!ignore_target_footprint_) {
 
