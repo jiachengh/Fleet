@@ -2,7 +2,8 @@
 
 /home/jiacheng/tools/platform-tools/adb reboot bootloader
 
-export ANDROID_PRODUCT_OUT=/media/jiacheng/DATA1/Pixel3/android-10-0/out/target/product/blueline
+# export ANDROID_PRODUCT_OUT=/media/jiacheng/DATA1/Pixel3/android-10-0/out/target/product/blueline
+export ANDROID_PRODUCT_OUT=/media/jiacheng/DATA3/Pixel3/Fleet/Fleet-AE/Images/Original-Android/blueline # Pre-built
 
 cd  $ANDROID_PRODUCT_OUT
 

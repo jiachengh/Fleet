@@ -6,6 +6,8 @@
 #define JIACHENG_DEBUG
 #undef JIACHENG_DEBUG
 
+// Other variables are moved to "runtime/jiacheng_global.h"
+
 #endif
 
 // jiacheng end

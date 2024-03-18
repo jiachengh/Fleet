@@ -9,7 +9,8 @@ while [ $? -ne 0 ]; do
     adb root > /dev/null 2>&1
 done
 adb remount -R
-adb push ./android-kernel-0/out/android-msm-pixel-4.9/dist/*.ko /vendor/lib/modules
+# adb push ./android-kernel-0/out/android-msm-pixel-4.9/dist/*.ko /vendor/lib/modules
+adb push /media/jiacheng/DATA3/Pixel3/Fleet/Fleet-AE/Images/Original-Android/dist/*.ko /vendor/lib/modules # pre-built
 adb disable-verity
 adb reboot
 

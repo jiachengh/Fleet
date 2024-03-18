@@ -7,8 +7,8 @@ sys.path.append('tool-scripts')
 
 import use_utils
 
-USE_DURATION = 6 # default 6 (6*5=30 seconds)
-REPEAT_TIME = 3  # default 24
+USE_DURATION = 10 # default 10 (10*3=30 seconds)
+REPEAT_TIME = 4  # default 24
 
 # Record the hot launch times
 hot_launch_time_twitter = []
@@ -87,278 +87,299 @@ use_utils.start_all_apps()
 
 for i in range(REPEAT_TIME):    
     result = use_utils.start_twitter()
-    print(result)
-    status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
-    if status == 'ok':
-        if launch_state == 'HOT':
-            hot_launch_time_twitter.append(wait_time)
-        elif launch_state == 'COLD':
-            cold_launch_time_twitter.append(wait_time)
-        else:
-            other_launch_time_twitter.append(wait_time)
-    use_utils.use_app_twitter(USE_DURATION)
+    if i != 0:
+        print(result)
+        status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
+        if status == 'ok':
+            if launch_state == 'HOT':
+                hot_launch_time_twitter.append(wait_time)
+            elif launch_state == 'COLD':
+                cold_launch_time_twitter.append(wait_time)
+            else:
+                other_launch_time_twitter.append(wait_time)
+        use_utils.use_app_twitter(USE_DURATION)
     
     
     result = use_utils.start_facebook()
-    print(result)
-    status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
-    if status == 'ok':
-        if launch_state == 'HOT':
-            hot_launch_time_facebook.append(wait_time)
-        elif launch_state == 'COLD':
-            cold_launch_time_facebook.append(wait_time)
-        else:
-            other_launch_time_facebook.append(wait_time)
-    use_utils.use_app_facebook(USE_DURATION)
+    if i != 0:
+        print(result)
+        status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
+        if status == 'ok':
+            if launch_state == 'HOT':
+                hot_launch_time_facebook.append(wait_time)
+            elif launch_state == 'COLD':
+                cold_launch_time_facebook.append(wait_time)
+            else:
+                other_launch_time_facebook.append(wait_time)
+        use_utils.use_app_facebook(USE_DURATION)
 
 
     result = use_utils.start_instagram()
-    print(result)
-    status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
-    if status == 'ok':
-        if launch_state == 'HOT':
-            hot_launch_time_instagram.append(wait_time)
-        elif launch_state == 'COLD':
-            cold_launch_time_instagram.append(wait_time)
-        else:
-            other_launch_time_instagram.append(wait_time)
-    use_utils.use_app_instagram(USE_DURATION)
+    if i != 0:
+        print(result)
+        status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
+        if status == 'ok':
+            if launch_state == 'HOT':
+                hot_launch_time_instagram.append(wait_time)
+            elif launch_state == 'COLD':
+                cold_launch_time_instagram.append(wait_time)
+            else:
+                other_launch_time_instagram.append(wait_time)
+        use_utils.use_app_instagram(USE_DURATION)
 
 
+for i in range(REPEAT_TIME): 
     result = use_utils.start_telegram()
-    print(result)
-    status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
-    if status == 'ok':
-        if launch_state == 'HOT':
-            hot_launch_time_telegram.append(wait_time)
-        elif launch_state == 'COLD':
-            cold_launch_time_telegram.append(wait_time)
-        else:
-            other_launch_time_telegram.append(wait_time)
-    use_utils.use_app_telegram(USE_DURATION)
-
+    if i != 0: 
+        print(result)
+        status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
+        if status == 'ok':
+            if launch_state == 'HOT':
+                hot_launch_time_telegram.append(wait_time)
+            elif launch_state == 'COLD':
+                cold_launch_time_telegram.append(wait_time)
+            else:
+                other_launch_time_telegram.append(wait_time)
+        use_utils.use_app_telegram(USE_DURATION)
 
     result = use_utils.start_line()
-    print(result)
-    status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
-    if status == 'ok':
-        if launch_state == 'HOT':
-            hot_launch_time_line.append(wait_time)
-        elif launch_state == 'COLD':
-            cold_launch_time_line.append(wait_time)
-        else:
-            other_launch_time_line.append(wait_time)
-    use_utils.use_app_line(USE_DURATION)
+    if i != 0: 
+        print(result)
+        status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
+        if status == 'ok':
+            if launch_state == 'HOT':
+                hot_launch_time_line.append(wait_time)
+            elif launch_state == 'COLD':
+                cold_launch_time_line.append(wait_time)
+            else:
+                other_launch_time_line.append(wait_time)
+        use_utils.use_app_line(USE_DURATION)
 
-
+    
     result = use_utils.start_youtube()
-    print(result)
-    status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
-    if status == 'ok':
-        if launch_state == 'HOT':
-            hot_launch_time_youtube.append(wait_time)
-        elif launch_state == 'COLD':
-            cold_launch_time_youtube.append(wait_time)
-        else:
-            other_launch_time_youtube.append(wait_time)
-    use_utils.use_app_youtube(USE_DURATION)
+    if i != 0: 
+        print(result)
+        status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
+        if status == 'ok':
+            if launch_state == 'HOT':
+                hot_launch_time_youtube.append(wait_time)
+            elif launch_state == 'COLD':
+                cold_launch_time_youtube.append(wait_time)
+            else:
+                other_launch_time_youtube.append(wait_time)
+        use_utils.use_app_youtube(USE_DURATION)
 
 
 for i in range(REPEAT_TIME): 
     result = use_utils.start_tiktok()
-    print(result)
-    status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
-    if status == 'ok':
-        if launch_state == 'HOT':
-            hot_launch_time_tiktok.append(wait_time)
-        elif launch_state == 'COLD':
-            cold_launch_time_tiktok.append(wait_time)
-        else:
-            other_launch_time_tiktok.append(wait_time)
-    use_utils.use_app_tiktok(USE_DURATION)
+    if i != 0: 
+        print(result)
+        status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
+        if status == 'ok':
+            if launch_state == 'HOT':
+                hot_launch_time_tiktok.append(wait_time)
+            elif launch_state == 'COLD':
+                cold_launch_time_tiktok.append(wait_time)
+            else:
+                other_launch_time_tiktok.append(wait_time)
+        use_utils.use_app_tiktok(USE_DURATION)
 
 
     result = use_utils.start_spotify()
-    print(result)
-    status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
-    if status == 'ok':
-        if launch_state == 'HOT':
-            hot_launch_time_spotify.append(wait_time)
-        elif launch_state == 'COLD':
-            cold_launch_time_spotify.append(wait_time)
-        else:
-            other_launch_time_spotify.append(wait_time)
-    use_utils.use_app_spotify(USE_DURATION)
-
+    if i != 0: 
+        print(result)
+        status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
+        if status == 'ok':
+            if launch_state == 'HOT':
+                hot_launch_time_spotify.append(wait_time)
+            elif launch_state == 'COLD':
+                cold_launch_time_spotify.append(wait_time)
+            else:
+                other_launch_time_spotify.append(wait_time)
+        use_utils.use_app_spotify(USE_DURATION)
 
     result = use_utils.start_twitch()
-    print(result)
-    status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
-    if status == 'ok':
-        if launch_state == 'HOT':
-            hot_launch_time_twitch.append(wait_time)
-        elif launch_state == 'COLD':
-            cold_launch_time_twitch.append(wait_time)
-        else:
-            other_launch_time_twitch.append(wait_time)
-    use_utils.use_app_twitch(USE_DURATION)
+    if i != 0: 
+        print(result)
+        status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
+        if status == 'ok':
+            if launch_state == 'HOT':
+                hot_launch_time_twitch.append(wait_time)
+            elif launch_state == 'COLD':
+                cold_launch_time_twitch.append(wait_time)
+            else:
+                other_launch_time_twitch.append(wait_time)
+        use_utils.use_app_twitch(USE_DURATION)
 
 
+for i in range(REPEAT_TIME): 
     result = use_utils.start_rave()
-    print(result)
-    status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
-    if status == 'ok':
-        if launch_state == 'HOT':
-            hot_launch_time_rave.append(wait_time)
-        elif launch_state == 'COLD':
-            cold_launch_time_rave.append(wait_time)
-        else:
-            other_launch_time_rave.append(wait_time)
-    use_utils.use_app_rave(USE_DURATION)
+    if i != 0: 
+        print(result)
+        status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
+        if status == 'ok':
+            if launch_state == 'HOT':
+                hot_launch_time_rave.append(wait_time)
+            elif launch_state == 'COLD':
+                cold_launch_time_rave.append(wait_time)
+            else:
+                other_launch_time_rave.append(wait_time)
+        use_utils.use_app_rave(USE_DURATION)
 
     result = use_utils.start_bigolive()
-    print(result)
-    status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
-    if status == 'ok':
-        if launch_state == 'HOT':
-            hot_launch_time_bigolive.append(wait_time)
-        elif launch_state == 'COLD':
-            cold_launch_time_bigolive.append(wait_time)
-        else:
-            other_launch_time_bigolive.append(wait_time)
-    use_utils.use_app_bigolive(USE_DURATION)
+    if i != 0: 
+        print(result)
+        status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
+        if status == 'ok':
+            if launch_state == 'HOT':
+                hot_launch_time_bigolive.append(wait_time)
+            elif launch_state == 'COLD':
+                cold_launch_time_bigolive.append(wait_time)
+            else:
+                other_launch_time_bigolive.append(wait_time)
+        use_utils.use_app_bigolive(USE_DURATION)
 
 
     result = use_utils.start_amazon()
-    print(result)
-    status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
-    if status == 'ok':
-        if launch_state == 'HOT':
-            hot_launch_time_amazon.append(wait_time)
-        elif launch_state == 'COLD':
-            cold_launch_time_amazon.append(wait_time)
-        else:
-            other_launch_time_amazon.append(wait_time)
-    use_utils.use_app_amazon(USE_DURATION)
+    if i != 0: 
+        print(result)
+        status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
+        if status == 'ok':
+            if launch_state == 'HOT':
+                hot_launch_time_amazon.append(wait_time)
+            elif launch_state == 'COLD':
+                cold_launch_time_amazon.append(wait_time)
+            else:
+                other_launch_time_amazon.append(wait_time)
+        use_utils.use_app_amazon(USE_DURATION)
 
 
 for i in range(REPEAT_TIME): 
     result = use_utils.start_googlemaps()
-    print(result)
-    status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
-    if status == 'ok':
-        if launch_state == 'HOT':
-            hot_launch_time_googlemaps.append(wait_time)
-        elif launch_state == 'COLD':
-            cold_launch_time_googlemaps.append(wait_time)
-        else:
-            other_launch_time_googlemaps.append(wait_time)
-    use_utils.use_app_googlemaps(USE_DURATION)
+    if i != 0:
+        print(result)
+        status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
+        if status == 'ok':
+            if launch_state == 'HOT':
+                hot_launch_time_googlemaps.append(wait_time)
+            elif launch_state == 'COLD':
+                cold_launch_time_googlemaps.append(wait_time)
+            else:
+                other_launch_time_googlemaps.append(wait_time)
+        use_utils.use_app_googlemaps(USE_DURATION)
 
 
 
     result = use_utils.start_chrome()
-    print(result)
-    status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
-    if status == 'ok':
-        if launch_state == 'HOT':
-            hot_launch_time_chrome.append(wait_time)
-        elif launch_state == 'COLD':
-            cold_launch_time_chrome.append(wait_time)
-        else:
-            other_launch_time_chrome.append(wait_time)
-    use_utils.use_app_chrome(USE_DURATION)
+    if i != 0:
+        print(result)
+        status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
+        if status == 'ok':
+            if launch_state == 'HOT':
+                hot_launch_time_chrome.append(wait_time)
+            elif launch_state == 'COLD':
+                cold_launch_time_chrome.append(wait_time)
+            else:
+                other_launch_time_chrome.append(wait_time)
+        use_utils.use_app_chrome(USE_DURATION)
 
 
     result = use_utils.start_firefox()
-    print(result)
-    status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
-    if status == 'ok':
-        if launch_state == 'HOT':
-            hot_launch_time_firefox.append(wait_time)
-        elif launch_state == 'COLD':
-            cold_launch_time_firefox.append(wait_time)
-        else:
-            other_launch_time_firefox.append(wait_time)
-    use_utils.use_app_firefox(USE_DURATION)
+    if i != 0:
+        print(result)
+        status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
+        if status == 'ok':
+            if launch_state == 'HOT':
+                hot_launch_time_firefox.append(wait_time)
+            elif launch_state == 'COLD':
+                cold_launch_time_firefox.append(wait_time)
+            else:
+                other_launch_time_firefox.append(wait_time)
+        use_utils.use_app_firefox(USE_DURATION)
 
-
+for i in range(REPEAT_TIME): 
     result = use_utils.start_linkedin()
-    print(result)
-    status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
-    if status == 'ok':
-        if launch_state == 'HOT':
-            hot_launch_time_linkedin.append(wait_time)
-        elif launch_state == 'COLD':
-            cold_launch_time_linkedin.append(wait_time)
-        else:
-            other_launch_time_linkedin.append(wait_time)
-    use_utils.use_app_linkedin(USE_DURATION)
+    if i != 0:
+        print(result)
+        status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
+        if status == 'ok':
+            if launch_state == 'HOT':
+                hot_launch_time_linkedin.append(wait_time)
+            elif launch_state == 'COLD':
+                cold_launch_time_linkedin.append(wait_time)
+            else:
+                other_launch_time_linkedin.append(wait_time)
+        use_utils.use_app_linkedin(USE_DURATION)
 
 
     result = use_utils.start_bigolive()
-    print(result)
-    status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
-    if status == 'ok':
-        if launch_state == 'HOT':
-            hot_launch_time_bigolive.append(wait_time)
-        elif launch_state == 'COLD':
-            cold_launch_time_bigolive.append(wait_time)
-        else:
-            other_launch_time_bigolive.append(wait_time)
-    use_utils.use_app_bigolive(USE_DURATION)
+    if i != 0:
+        print(result)
+        status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
+        if status == 'ok':
+            if launch_state == 'HOT':
+                hot_launch_time_bigolive.append(wait_time)
+            elif launch_state == 'COLD':
+                cold_launch_time_bigolive.append(wait_time)
+            else:
+                other_launch_time_bigolive.append(wait_time)
+        use_utils.use_app_bigolive(USE_DURATION)
 
 
     result = use_utils.start_amazon()
-    print(result)
-    status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
-    if status == 'ok':
-        if launch_state == 'HOT':
-            hot_launch_time_amazon.append(wait_time)
-        elif launch_state == 'COLD':
-            cold_launch_time_amazon.append(wait_time)
-        else:
-            other_launch_time_amazon.append(wait_time)
-    use_utils.use_app_amazon(USE_DURATION)
+    if i != 0:
+        print(result)
+        status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
+        if status == 'ok':
+            if launch_state == 'HOT':
+                hot_launch_time_amazon.append(wait_time)
+            elif launch_state == 'COLD':
+                cold_launch_time_amazon.append(wait_time)
+            else:
+                other_launch_time_amazon.append(wait_time)
+        use_utils.use_app_amazon(USE_DURATION)
 
 
 for i in range(REPEAT_TIME): 
     result = use_utils.start_spotify()
-    print(result)
-    status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
-    if status == 'ok':
-        if launch_state == 'HOT':
-            hot_launch_time_spotify.append(wait_time)
-        elif launch_state == 'COLD':
-            cold_launch_time_spotify.append(wait_time)
-        else:
-            other_launch_time_spotify.append(wait_time)
-    use_utils.use_app_spotify(USE_DURATION * 2)
+    if i != 0:
+        print(result)
+        status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
+        if status == 'ok':
+            if launch_state == 'HOT':
+                hot_launch_time_spotify.append(wait_time)
+            elif launch_state == 'COLD':
+                cold_launch_time_spotify.append(wait_time)
+            else:
+                other_launch_time_spotify.append(wait_time)
+        use_utils.use_app_spotify(USE_DURATION * 2)
 
     result = use_utils.start_angrybirds()
-    print(result)
-    status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
-    if status == 'ok':
-        if launch_state == 'HOT':
-            hot_launch_time_angrybirds.append(wait_time)
-        elif launch_state == 'COLD':
-            cold_launch_time_angrybirds.append(wait_time)
-        else:
-            other_launch_time_angrybirds.append(wait_time)
-    use_utils.use_app_angrybirds(USE_DURATION * 2)
+    if i != 0:
+        print(result)
+        status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
+        if status == 'ok':
+            if launch_state == 'HOT':
+                hot_launch_time_angrybirds.append(wait_time)
+            elif launch_state == 'COLD':
+                cold_launch_time_angrybirds.append(wait_time)
+            else:
+                other_launch_time_angrybirds.append(wait_time)
+        use_utils.use_app_angrybirds(USE_DURATION * 2)
 
 
     result = use_utils.start_candycrush()
-    print(result)
-    status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
-    if status == 'ok':
-        if launch_state == 'HOT':
-            hot_launch_time_candycrush.append(wait_time)
-        elif launch_state == 'COLD':
-            cold_launch_time_candycrush.append(wait_time)
-        else:
-            other_launch_time_candycrush.append(wait_time)
-    use_utils.use_app_candycrush(USE_DURATION * 2)
+    if i != 0:
+        print(result)
+        status, launch_state, wait_time = use_utils.parsing_adb_am_result(result)
+        if status == 'ok':
+            if launch_state == 'HOT':
+                hot_launch_time_candycrush.append(wait_time)
+            elif launch_state == 'COLD':
+                cold_launch_time_candycrush.append(wait_time)
+            else:
+                other_launch_time_candycrush.append(wait_time)
+        use_utils.use_app_candycrush(USE_DURATION * 2)
 
 
 # Output hot launch times

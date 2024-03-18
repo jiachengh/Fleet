@@ -114,7 +114,8 @@ To do this, we need to (1) modify the source code by commenting out the `#undef 
 Additionally, we need to test Fleet in two configurations: (1) enabling BGC and (2) disabling BGC.
 To enable BGC, we need to set the `ENABLE_BGC` variable to `true` and rebuild the Fleet.
 To disable BGC, we need to set the `ENABLE_BGC` variable to `false` and rebuild Fleet.
-(The paper, we have one more configuration, which is the original Android. It can be configured by setting `ENABLE_APGC`, `ENABLE_NRO`, `ENABLE_FYO`, and `ENABLE_BGC` all to `false` in the `runtime/jiacheng_debug.h` file.)
+(The paper, we have one more configuration, which is the original Android. It can be configured by setting `ENABLE_APGC`, `ENABLE_NRO`, `ENABLE_FYO`, and `ENABLE_BGC` all to `false`)
+We can configure these options in the `runtime/jiacheng_global.h` file.
 
 For every comparison of the Android system, we collect the working set alongside the execution time using the following steps:
 
