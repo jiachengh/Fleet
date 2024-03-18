@@ -1,0 +1,2686 @@
+From 61c220086c75b77d5a433ab89a1ed112939c4fbd Mon Sep 17 00:00:00 2001
+From: jiachengh <jiacheng.huang@outlook.com>
+Date: Wed, 15 Sep 2021 12:58:49 +0800
+Subject: [PATCH 1/4] madvice
+
+Change-Id: I6f6d4077f834ae5e52f78b5e269038a1850e3d77
+Signed-off-by: jiachengh <jiacheng.huang@outlook.com>
+---
+ Makefile                               |   5 +-
+ fs/proc/base.c                         |  10 +
+ include/linux/jiacheng.h               |  13 +
+ include/uapi/asm-generic/mman-common.h |   4 +
+ init/main.c                            |   9 +
+ jiachenghack/Makefile                  |   1 +
+ jiachenghack/jiachenghack.c            |  99 +++++++
+ jiachenghack/jiachenghack.h            |  92 ++++++
+ mm/Makefile                            |   4 +-
+ mm/jiachenghack_mm.c                   | 155 ++++++++++
+ mm/jiachenghack_mm.h                   | 151 ++++++++++
+ mm/madvise.c                           |  28 ++
+ mm/vmscan.c                            | 377 +++++++++++++++++++++++++
+ 13 files changed, 945 insertions(+), 3 deletions(-)
+ create mode 100644 include/linux/jiacheng.h
+ create mode 100644 jiachenghack/Makefile
+ create mode 100644 jiachenghack/jiachenghack.c
+ create mode 100644 jiachenghack/jiachenghack.h
+ create mode 100644 mm/jiachenghack_mm.c
+ create mode 100644 mm/jiachenghack_mm.h
+
+diff --git a/Makefile b/Makefile
+index 5c77441ce146..58133f4b70c1 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1043,9 +1043,10 @@ mod_sign_cmd = true
+ endif
+ export mod_sign_cmd
+ 
+-
++# jiacheng start
+ ifeq ($(KBUILD_EXTMOD),)
+-core-y		+= kernel/ certs/ mm/ fs/ ipc/ security/ crypto/ block/
++core-y		+= kernel/ certs/ mm/ fs/ ipc/ security/ crypto/ block/ jiachenghack/
++# jiacheng end
+ 
+ vmlinux-dirs	:= $(patsubst %/,%,$(filter %/, $(init-y) $(init-m) \
+ 		     $(core-y) $(core-m) $(drivers-y) $(drivers-m) \
+diff --git a/fs/proc/base.c b/fs/proc/base.c
+index 215f96d410aa..7088f4d78b60 100644
+--- a/fs/proc/base.c
++++ b/fs/proc/base.c
+@@ -97,6 +97,10 @@
+ 
+ #include "../../lib/kstrtox.h"
+ 
++// jiacheng start
++#include <linux/jiacheng.h>
++// jiacheng end
++
+ /* NOTE:
+  *	Implementing inode permission operations in /proc is almost
+  *	certainly an error.  Permission checks need to happen during
+@@ -3174,6 +3178,12 @@ static const struct pid_entry tgid_base_stuff[] = {
+ 	REG("mounts",     S_IRUGO, proc_mounts_operations),
+ 	REG("mountinfo",  S_IRUGO, proc_mountinfo_operations),
+ 	REG("mountstats", S_IRUSR, proc_mountstats_operations),
++	
++	// jiacheng start
++	REG("runtime_write", S_IWUGO, proc_runtime_write_operations),
++	REG("runtime_read", S_IRUGO, proc_runtime_read_operations),
++	// jiacheng end
++
+ #ifdef CONFIG_PROCESS_RECLAIM
+ 	REG("reclaim",    S_IWUGO, proc_reclaim_operations),
+ #endif
+diff --git a/include/linux/jiacheng.h b/include/linux/jiacheng.h
+new file mode 100644
+index 000000000000..0cf2ed2ca911
+--- /dev/null
++++ b/include/linux/jiacheng.h
+@@ -0,0 +1,13 @@
++#ifndef _LINUX_JIACHENG_H
++#define _LINUX_JIACHENG_H
++
++void jiacheng_hello(void);
++void jiacheng_main(void);
++
++void jiacheng_page_range_cold(struct vm_area_struct *vma, unsigned long start, unsigned long size);
++
++
++extern const struct file_operations proc_runtime_write_operations;
++extern const struct file_operations proc_runtime_read_operations;
++
++#endif
+\ No newline at end of file
+diff --git a/include/uapi/asm-generic/mman-common.h b/include/uapi/asm-generic/mman-common.h
+index 8c27db0c5c08..57b32661bf03 100644
+--- a/include/uapi/asm-generic/mman-common.h
++++ b/include/uapi/asm-generic/mman-common.h
+@@ -58,6 +58,10 @@
+ 					   overrides the coredump filter bits */
+ #define MADV_DODUMP	17		/* Clear the MADV_DONTDUMP flag */
+ 
++// jiacheng start
++#define MADV_COLD 233
++// jiacheng end
++
+ /* compatibility flags */
+ #define MAP_FILE	0
+ 
+diff --git a/init/main.c b/init/main.c
+index 9e2c502365ac..936d882dff7a 100644
+--- a/init/main.c
++++ b/init/main.c
+@@ -90,6 +90,10 @@
+ #include <asm/sections.h>
+ #include <asm/cacheflush.h>
+ 
++// jiacheng start
++#include <linux/jiacheng.h>
++// jiacheng end
++
+ static int kernel_init(void *);
+ 
+ extern void init_IRQ(void);
+@@ -406,6 +410,11 @@ static noinline void __ref rest_init(void)
+ 	 */
+ 	init_idle_bootup_task(current);
+ 	schedule_preempt_disabled();
++
++	// jiacheng start
++	jiacheng_main();
++	// jiacheng end
++	
+ 	/* Call into cpu_idle with preempt disabled */
+ 	cpu_startup_entry(CPUHP_ONLINE);
+ }
+diff --git a/jiachenghack/Makefile b/jiachenghack/Makefile
+new file mode 100644
+index 000000000000..d56d46b1710c
+--- /dev/null
++++ b/jiachenghack/Makefile
+@@ -0,0 +1 @@
++obj-y := jiachenghack.o
+\ No newline at end of file
+diff --git a/jiachenghack/jiachenghack.c b/jiachenghack/jiachenghack.c
+new file mode 100644
+index 000000000000..8a8de4d0f3a0
+--- /dev/null
++++ b/jiachenghack/jiachenghack.c
+@@ -0,0 +1,99 @@
++#include "jiachenghack.h"
++
++
++static int jiacheng_main_thread(void * params) {
++	while(1) {
++		// struct task_struct *task = &init_task;
++		// struct mm_struct *mm = NULL;
++		// struct vm_area_struct *p;
++		// for_each_process(task) {
++		// 	printk("pid: %lu", task->pid);
++		// 	// mm = get_task_mm(task);
++		// 	mm = task->mm;
++		// 	if (!mm) continue;
++		// 	struct vm_area_struct *mmap = mm->mmap;
++		// 	for (p = mmap; ;) {
++		// 		// print
++		// 		printk("[%lu, %lu]", p->vm_start, p->vm_end);
++		// 		p = p->vm_next;
++		// 		if (p == mmap) break;
++		// 	}
++			
++		// }
++
++		msleep(60 * 1000);
++		printk("jiacheng main after 60 seconds.\n"); 
++	}
++	return 0;
++}
++
++
++void jiacheng_hello(void) {
++    printk("this is jiacheng_hello from jiacheng.c\n");
++}
++
++void jiacheng_main(void) {
++	struct task_struct *tsk;
++	int pid;
++	
++	pr_info("jiacheng hack start ---> 20201212 \n");
++
++	pid = kernel_thread(jiacheng_main_thread, NULL, CLONE_FS | CLONE_FILES);
++
++	rcu_read_lock();
++	tsk = find_task_by_pid_ns(pid, &init_pid_ns);
++	set_cpus_allowed_ptr(tsk, cpumask_of(smp_processor_id()));
++	rcu_read_unlock();
++}
++
++
++
++
++// 实现/proc/runtime_write
++static ssize_t runtime_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos) {
++	char buffer[100];
++
++	printk("jiacheng  jiacheng_write start\n");
++	if(copy_from_user(buffer, buf, count)) {
++		return -EFAULT;		
++	}
++	printk(buffer);
++	
++	jiacheng_hello();
++	printk("jiacheng jiacheng_write end\n");
++
++	return count;
++}
++
++
++const struct file_operations proc_runtime_write_operations = {
++	.llseek	= noop_llseek,
++	.write = runtime_write
++};
++
++// 实现/proc/runtime_read
++static ssize_t runtime_read(struct file *file, char __user *buf, size_t count, loff_t *ppos) {
++	char buffer[100];
++	loff_t len = 0;
++	size_t ret = 0, copied = 0;
++
++	snprintf(buffer, sizeof(buffer), "This is jiacheng_read.\n");
++
++	len = min(count, strlen(buffer));
++	if (*ppos > 100) {
++		goto out;
++	}
++	if(copy_to_user(buf, buffer, len)) {
++		printk("jiachenghack.c 95 jiacheng_read --> EFAULT");
++		ret = -EFAULT;
++		goto out;
++	}
++	copied += len;
++	*ppos += len;
++out:
++	return copied;
++}
++
++const struct file_operations proc_runtime_read_operations = {
++	.read		= runtime_read,
++};
+diff --git a/jiachenghack/jiachenghack.h b/jiachenghack/jiachenghack.h
+new file mode 100644
+index 000000000000..61ef1cb870f0
+--- /dev/null
++++ b/jiachenghack/jiachenghack.h
+@@ -0,0 +1,92 @@
++#ifndef _LINUX_JIACHENGHACK_H
++#define _LINUX_JIACHENGHACK_H
++
++#include <linux/types.h>
++#include <linux/module.h>
++#include <linux/proc_fs.h>
++#include <linux/kernel.h>
++#include <linux/syscalls.h>
++#include <linux/stackprotector.h>
++#include <linux/string.h>
++#include <linux/ctype.h>
++#include <linux/delay.h>
++#include <linux/ioport.h>
++#include <linux/init.h>
++#include <linux/initrd.h>
++#include <linux/bootmem.h>
++#include <linux/acpi.h>
++#include <linux/tty.h>
++#include <linux/percpu.h>
++#include <linux/kmod.h>
++#include <linux/vmalloc.h>
++#include <linux/kernel_stat.h>
++#include <linux/start_kernel.h>
++#include <linux/security.h>
++#include <linux/smp.h>
++#include <linux/profile.h>
++#include <linux/rcupdate.h>
++#include <linux/moduleparam.h>
++#include <linux/kallsyms.h>
++#include <linux/writeback.h>
++#include <linux/cpu.h>
++#include <linux/cpuset.h>
++#include <linux/cgroup.h>
++#include <linux/efi.h>
++#include <linux/tick.h>
++#include <linux/interrupt.h>
++#include <linux/taskstats_kern.h>
++#include <linux/delayacct.h>
++#include <linux/unistd.h>
++#include <linux/rmap.h>
++#include <linux/mempolicy.h>
++#include <linux/key.h>
++#include <linux/buffer_head.h>
++#include <linux/page_ext.h>
++#include <linux/debug_locks.h>
++#include <linux/debugobjects.h>
++#include <linux/lockdep.h>
++#include <linux/kmemleak.h>
++#include <linux/pid_namespace.h>
++#include <linux/device.h>
++#include <linux/kthread.h>
++#include <linux/sched.h>
++#include <linux/signal.h>
++#include <linux/idr.h>
++#include <linux/kgdb.h>
++#include <linux/ftrace.h>
++#include <linux/async.h>
++#include <linux/kmemcheck.h>
++#include <linux/sfi.h>
++#include <linux/shmem_fs.h>
++#include <linux/slab.h>
++#include <linux/perf_event.h>
++#include <linux/file.h>
++#include <linux/ptrace.h>
++#include <linux/blkdev.h>
++#include <linux/elevator.h>
++#include <linux/sched_clock.h>
++#include <linux/context_tracking.h>
++#include <linux/random.h>
++#include <linux/list.h>
++#include <linux/integrity.h>
++#include <linux/proc_ns.h>
++#include <linux/io.h>
++#include <linux/kaiser.h>
++#include <linux/swap.h>
++#include <linux/mm_inline.h>
++
++#include <asm/io.h>
++#include <asm/bugs.h>
++#include <asm/setup.h>
++#include <asm/sections.h>
++#include <asm/cacheflush.h>
++
++// implement
++#include <linux/jiacheng.h>
++
++struct runtime_ctx {
++
++};
++
++
++#endif
+\ No newline at end of file
+diff --git a/mm/Makefile b/mm/Makefile
+index 457892dc4b9f..8731ccccaa17 100644
+--- a/mm/Makefile
++++ b/mm/Makefile
+@@ -33,6 +33,7 @@ ifdef CONFIG_CROSS_MEMORY_ATTACH
+ mmu-$(CONFIG_MMU)	+= process_vm_access.o
+ endif
+ 
++# jiacheng start
+ obj-y			:= filemap.o mempool.o oom_kill.o \
+ 			   maccess.o page_alloc.o page-writeback.o \
+ 			   readahead.o swap.o truncate.o vmscan.o shmem.o \
+@@ -40,7 +41,8 @@ obj-y			:= filemap.o mempool.o oom_kill.o \
+ 			   mm_init.o mmu_context.o percpu.o slab_common.o \
+ 			   compaction.o vmacache.o \
+ 			   interval_tree.o list_lru.o workingset.o \
+-			   debug.o $(mmu-y) showmem.o vmpressure.o
++			   debug.o $(mmu-y) showmem.o vmpressure.o jiachenghack_mm.o
++# jiacheng end
+ 
+ obj-y += init-mm.o
+ 
+diff --git a/mm/jiachenghack_mm.c b/mm/jiachenghack_mm.c
+new file mode 100644
+index 000000000000..b4eb18535113
+--- /dev/null
++++ b/mm/jiachenghack_mm.c
+@@ -0,0 +1,155 @@
++#include <asm/mmu_context.h>
++
++#include "jiachenghack_mm.h"
++
++#include "internal.h"
++
++static unsigned long shrink_page(
++	struct page *page, 
++	struct pglist_data *pgdat, 
++	struct jiacheng_scan_control *sc, 
++	enum ttu_flags ttu_flags,
++	unsigned long *ret_nr_dirty,
++	unsigned long *ret_nr_unqueued_dirty,
++	unsigned long *ret_nr_congested,
++	unsigned long *ret_nr_writeback,
++	unsigned long *ret_nr_immediate,
++	bool force_reclaim,
++	struct list_head *ret_list) {
++	
++	int reclaimed;
++	LIST_HEAD(page_list);
++	list_add(&page->lru, &page_list);
++	reclaimed = jiacheng_shrink_page_list(
++		&page_list,
++		pgdat, 
++		sc,
++		ttu_flags,
++		ret_nr_dirty,
++		ret_nr_unqueued_dirty,
++		ret_nr_congested,
++		ret_nr_writeback,
++		ret_nr_immediate,
++		force_reclaim
++	);
++	if (!reclaimed) {
++		list_splice(&page_list, ret_list);
++	}
++	return reclaimed;
++}
++
++static unsigned long cold_pages_from_list(struct list_head *page_list) {
++	struct jiacheng_scan_control sc = {
++		.gfp_mask = GFP_KERNEL,
++		.priority = DEF_PRIORITY,
++		.may_unmap = 1,
++		.may_swap = 1,
++	};
++	LIST_HEAD(ret_list);
++	struct page *page;
++	unsigned long dummy1, dummy2, dummy3, dummy4, dummy5;
++	unsigned long nr_reclaimed = 0;
++	
++	while (!list_empty(page_list)) {
++		page = lru_to_page(page_list);
++		list_del(&page->lru);
++		ClearPageActive(page);
++		nr_reclaimed += shrink_page(
++			page, 
++			page_pgdat(page), 
++			&sc, 
++			TTU_UNMAP|TTU_IGNORE_ACCESS, 
++			&dummy1, 
++			&dummy2, 
++			&dummy3, 
++			&dummy4,
++			&dummy5,
++			true, 
++			&ret_list);
++	}
++
++	while (!list_empty(&ret_list)) {
++		page = lru_to_page(&ret_list);
++		list_del(&page->lru);
++		putback_lru_page(page);
++	}
++	return nr_reclaimed;
++}
++
++static int cold_pte_range(pmd_t *pmd, unsigned long addr, unsigned long end, struct mm_walk *walk) { // require --> down_read(&mm->mmap_sem);
++	struct vm_area_struct *vma = walk->vma;
++	pte_t *pte, ptent;
++	spinlock_t *ptl;
++	struct page *page;
++	LIST_HEAD(page_list);
++	int isolated;
++repeat:
++	isolated = 0;
++	pte = pte_offset_map_lock(vma->vm_mm, pmd, addr, &ptl);
++	for (; addr != end; pte++, addr += PAGE_SIZE) {
++		ptent = *pte;
++		if (!pte_present(ptent)) {
++			continue;
++		}
++		page = vm_normal_page(vma, addr, ptent);
++		if (!page) {
++			continue;
++		}
++		if (isolate_lru_page(page)) {
++			continue;
++		}
++		list_add(&page->lru, &page_list);
++		isolated++;
++		if (isolated >= SWAP_CLUSTER_MAX) {
++			break;
++		}
++	}
++	pte_unmap_unlock(pte - 1, ptl);
++	cold_pages_from_list(&page_list);
++	if (addr != end) {
++		goto repeat;
++	}
++	return 0;
++}
++
++
++// madvise调用
++void jiacheng_page_range_cold(struct vm_area_struct *vma, unsigned long start, unsigned long size)
++{
++	struct task_struct *task;
++	struct mm_struct *mm;
++	
++	printk("jiachenghack_mm.c jiacheng_page_range_cold start=%lu size=%lu", start, size);
++	rcu_read_lock();
++	task = current;
++	get_task_struct(task);
++	rcu_read_unlock();
++
++	mm = get_task_mm(task);
++	if (mm) {
++		struct mm_walk cold_walk = {
++			.pmd_entry = cold_pte_range,
++			.mm = mm,
++			.vma = vma,
++		};
++		down_read(&mm->mmap_sem);
++		walk_page_range(start, start + size, &cold_walk);
++		flush_tlb_mm(mm);
++		up_read(&mm->mmap_sem);
++		mmput(mm);
++	}
++	put_task_struct(task);
++	// struct mm_struct *mm = vma->vm_mm;
++	// struct mmu_gather tlb;
++	// unsigned long end = start + size;
++
++	// lru_add_drain();
++	// tlb_gather_mmu(&tlb, mm, start, end);
++	// update_hiwater_rss(mm);
++	// mmu_notifier_invalidate_range_start(mm, start, end);
++	// for ( ; vma && vma->vm_start < end; vma = vma->vm_next)
++	// 	unmap_single_vma(&tlb, vma, start, end, details);
++	// mmu_notifier_invalidate_range_end(mm, start, end);
++	// tlb_finish_mmu(&tlb, start, end);
++	
++} 
+\ No newline at end of file
+diff --git a/mm/jiachenghack_mm.h b/mm/jiachenghack_mm.h
+new file mode 100644
+index 000000000000..d2098d5707f0
+--- /dev/null
++++ b/mm/jiachenghack_mm.h
+@@ -0,0 +1,151 @@
++#ifndef _LINUX_JIACHENGHACK_MM_H
++#define _LINUX_JIACHENGHACK_MM_H
++
++#include <linux/types.h>
++#include <linux/module.h>
++#include <linux/proc_fs.h>
++#include <linux/kernel.h>
++#include <linux/syscalls.h>
++#include <linux/stackprotector.h>
++#include <linux/string.h>
++#include <linux/ctype.h>
++#include <linux/delay.h>
++#include <linux/ioport.h>
++#include <linux/init.h>
++#include <linux/initrd.h>
++#include <linux/bootmem.h>
++#include <linux/acpi.h>
++#include <linux/tty.h>
++#include <linux/percpu.h>
++#include <linux/kmod.h>
++#include <linux/vmalloc.h>
++#include <linux/kernel_stat.h>
++#include <linux/start_kernel.h>
++#include <linux/security.h>
++#include <linux/smp.h>
++#include <linux/profile.h>
++#include <linux/rcupdate.h>
++#include <linux/moduleparam.h>
++#include <linux/kallsyms.h>
++#include <linux/writeback.h>
++#include <linux/cpu.h>
++#include <linux/cpuset.h>
++#include <linux/cgroup.h>
++#include <linux/efi.h>
++#include <linux/tick.h>
++#include <linux/interrupt.h>
++#include <linux/taskstats_kern.h>
++#include <linux/delayacct.h>
++#include <linux/unistd.h>
++#include <linux/rmap.h>
++#include <linux/mempolicy.h>
++#include <linux/key.h>
++#include <linux/buffer_head.h>
++#include <linux/page_ext.h>
++#include <linux/debug_locks.h>
++#include <linux/debugobjects.h>
++#include <linux/lockdep.h>
++#include <linux/kmemleak.h>
++#include <linux/pid_namespace.h>
++#include <linux/device.h>
++#include <linux/kthread.h>
++#include <linux/sched.h>
++#include <linux/signal.h>
++#include <linux/idr.h>
++#include <linux/kgdb.h>
++#include <linux/ftrace.h>
++#include <linux/async.h>
++#include <linux/kmemcheck.h>
++#include <linux/sfi.h>
++#include <linux/shmem_fs.h>
++#include <linux/slab.h>
++#include <linux/perf_event.h>
++#include <linux/file.h>
++#include <linux/ptrace.h>
++#include <linux/blkdev.h>
++#include <linux/elevator.h>
++#include <linux/sched_clock.h>
++#include <linux/context_tracking.h>
++#include <linux/random.h>
++#include <linux/list.h>
++#include <linux/integrity.h>
++#include <linux/proc_ns.h>
++#include <linux/io.h>
++#include <linux/kaiser.h>
++#include <linux/swap.h>
++#include <linux/mm_inline.h>
++
++#include <asm/io.h>
++#include <asm/bugs.h>
++#include <asm/setup.h>
++#include <asm/sections.h>
++#include <asm/cacheflush.h>
++
++#include <linux/jiacheng.h>
++
++struct jiacheng_scan_control {
++	/* How many pages shrink_list() should reclaim */
++	unsigned long nr_to_reclaim;
++
++	/* This context's GFP mask */
++	gfp_t gfp_mask;
++
++	/* Allocation order */
++	int order;
++
++	/*
++	 * Nodemask of nodes allowed by the caller. If NULL, all nodes
++	 * are scanned.
++	 */
++	nodemask_t	*nodemask;
++
++	/*
++	 * The memory cgroup that hit its limit and as a result is the
++	 * primary target of this reclaim invocation.
++	 */
++	struct mem_cgroup *target_mem_cgroup;
++
++	/* Scan (total_size >> priority) pages at once */
++	int priority;
++
++	/* The highest zone to isolate pages for reclaim from */
++	enum zone_type reclaim_idx;
++
++	unsigned int may_writepage:1;
++
++	/* Can mapped pages be reclaimed? */
++	unsigned int may_unmap:1;
++
++	/* Can pages be swapped as part of reclaim? */
++	unsigned int may_swap:1;
++
++	/* Can cgroups be reclaimed below their normal consumption range? */
++	unsigned int may_thrash:1;
++
++	unsigned int hibernation_mode:1;
++
++	/* One of the zones is ready for compaction */
++	unsigned int compaction_ready:1;
++
++	/* Incremented by the number of inactive pages that were scanned */
++	unsigned long nr_scanned;
++
++	/* Number of pages freed so far during a call to shrink_zones() */
++	unsigned long nr_reclaimed;
++};
++
++
++// vmscan.c中shrink_page_list()
++unsigned long jiacheng_shrink_page_list(struct list_head *page_list,
++				      struct pglist_data *pgdat,
++				      struct jiacheng_scan_control *sc,
++				      enum ttu_flags ttu_flags,
++				      unsigned long *ret_nr_dirty,
++				      unsigned long *ret_nr_unqueued_dirty,
++				      unsigned long *ret_nr_congested,
++				      unsigned long *ret_nr_writeback,
++				      unsigned long *ret_nr_immediate,
++				      bool force_reclaim); 
++
++
++#endif
+\ No newline at end of file
+diff --git a/mm/madvise.c b/mm/madvise.c
+index bf654aa6095b..cf0049684f19 100644
+--- a/mm/madvise.c
++++ b/mm/madvise.c
+@@ -27,6 +27,10 @@
+ 
+ #include "internal.h"
+ 
++// jiacheng start
++#include <linux/jiacheng.h>
++// jiacheng end
++
+ /*
+  * Any behaviour which results in changes to the vma->vm_flags needs to
+  * take mmap_sem for writing. Others, which simply traverse vmas, need
+@@ -39,6 +43,9 @@ static int madvise_need_mmap_write(int behavior)
+ 	case MADV_WILLNEED:
+ 	case MADV_DONTNEED:
+ 	case MADV_FREE:
++	// jiacheng start
++	case MADV_COLD:
++	// jiacheng end
+ 		return 0;
+ 	default:
+ 		/* be safe, default to 1. list exceptions explicitly */
+@@ -481,6 +488,20 @@ static long madvise_dontneed(struct vm_area_struct *vma,
+ 	return 0;
+ }
+ 
++// jiacheng start
++static long madvise_cold(struct vm_area_struct *vma,
++			     struct vm_area_struct **prev,
++			     unsigned long start, unsigned long end)
++{
++	*prev = vma;
++	if (vma->vm_flags & (VM_LOCKED|VM_HUGETLB|VM_PFNMAP))
++		return -EINVAL;
++
++	jiacheng_page_range_cold(vma, start, end - start);
++	return 0;
++}
++// jiacheng end
++
+ /*
+  * Application wants to free up the pages and associated backing store.
+  * This is effectively punching a hole into the middle of a file.
+@@ -591,6 +612,10 @@ madvise_vma(struct vm_area_struct *vma, struct vm_area_struct **prev,
+ 		/* passthrough */
+ 	case MADV_DONTNEED:
+ 		return madvise_dontneed(vma, prev, start, end);
++	// jiacheng start
++	case MADV_COLD:
++		return madvise_cold(vma, prev, start, end);
++	// jiacheng end
+ 	default:
+ 		return madvise_behavior(vma, prev, start, end, behavior);
+ 	}
+@@ -609,6 +634,9 @@ madvise_behavior_valid(int behavior)
+ 	case MADV_WILLNEED:
+ 	case MADV_DONTNEED:
+ 	case MADV_FREE:
++	// jiacheng start
++	case MADV_COLD:
++	// jiacheng end
+ #ifdef CONFIG_KSM
+ 	case MADV_MERGEABLE:
+ 	case MADV_UNMERGEABLE:
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index 59061ce55806..ad3fb01a8194 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -55,6 +55,10 @@
+ #include <linux/swapops.h>
+ #include <linux/balloon_compaction.h>
+ 
++// jiacheng start
++#include "jiachenghack_mm.h"
++// jiacheng end
++
+ #include "internal.h"
+ 
+ #define CREATE_TRACE_POINTS
+@@ -1319,6 +1323,379 @@ static unsigned long shrink_page_list(struct list_head *page_list,
+ 	return nr_reclaimed;
+ }
+ 
++// jiacheng start
++unsigned long jiacheng_shrink_page_list(
++	struct list_head *page_list,
++	struct pglist_data *pgdat,
++	struct jiacheng_scan_control *jiacheng_sc,
++	enum ttu_flags ttu_flags,
++	unsigned long *ret_nr_dirty,
++	unsigned long *ret_nr_unqueued_dirty,
++	unsigned long *ret_nr_congested,
++	unsigned long *ret_nr_writeback,
++	unsigned long *ret_nr_immediate,
++	bool force_reclaim) {
++
++	struct scan_control *sc = (struct scan_control *)jiacheng_sc;
++	LIST_HEAD(ret_pages);
++	LIST_HEAD(free_pages);
++	int pgactivate = 0;
++	unsigned long nr_unqueued_dirty = 0;
++	unsigned long nr_dirty = 0;
++	unsigned long nr_congested = 0;
++	unsigned long nr_reclaimed = 0;
++	unsigned long nr_writeback = 0;
++	unsigned long nr_immediate = 0;
++
++	cond_resched();
++
++	while (!list_empty(page_list)) {
++		struct address_space *mapping;
++		struct page *page;
++		int may_enter_fs;
++		enum page_references references = PAGEREF_RECLAIM_CLEAN;
++		bool dirty, writeback;
++		bool lazyfree = false;
++		int ret = SWAP_SUCCESS;
++
++		cond_resched();
++
++		page = lru_to_page(page_list);
++		list_del(&page->lru);
++
++		if (!trylock_page(page))
++			goto keep;
++
++		VM_BUG_ON_PAGE(PageActive(page), page);
++
++		sc->nr_scanned++;
++
++		if (unlikely(!page_evictable(page)))
++			goto cull_mlocked;
++
++		if (!sc->may_unmap && page_mapped(page))
++			goto keep_locked;
++
++		/* Double the slab pressure for mapped and swapcache pages */
++		if (page_mapped(page) || PageSwapCache(page))
++			sc->nr_scanned++;
++
++		may_enter_fs = (sc->gfp_mask & __GFP_FS) ||
++			(PageSwapCache(page) && (sc->gfp_mask & __GFP_IO));
++
++		/*
++		 * The number of dirty pages determines if a zone is marked
++		 * reclaim_congested which affects wait_iff_congested. kswapd
++		 * will stall and start writing pages if the tail of the LRU
++		 * is all dirty unqueued pages.
++		 */
++		page_check_dirty_writeback(page, &dirty, &writeback);
++		if (dirty || writeback)
++			nr_dirty++;
++
++		if (dirty && !writeback)
++			nr_unqueued_dirty++;
++
++		/*
++		 * Treat this page as congested if the underlying BDI is or if
++		 * pages are cycling through the LRU so quickly that the
++		 * pages marked for immediate reclaim are making it to the
++		 * end of the LRU a second time.
++		 */
++		mapping = page_mapping(page);
++		if (((dirty || writeback) && mapping &&
++		     inode_write_congested(mapping->host)) ||
++		    (writeback && PageReclaim(page)))
++			nr_congested++;
++
++		/*
++		 * If a page at the tail of the LRU is under writeback, there
++		 * are three cases to consider.
++		 *
++		 * 1) If reclaim is encountering an excessive number of pages
++		 *    under writeback and this page is both under writeback and
++		 *    PageReclaim then it indicates that pages are being queued
++		 *    for IO but are being recycled through the LRU before the
++		 *    IO can complete. Waiting on the page itself risks an
++		 *    indefinite stall if it is impossible to writeback the
++		 *    page due to IO error or disconnected storage so instead
++		 *    note that the LRU is being scanned too quickly and the
++		 *    caller can stall after page list has been processed.
++		 *
++		 * 2) Global or new memcg reclaim encounters a page that is
++		 *    not marked for immediate reclaim, or the caller does not
++		 *    have __GFP_FS (or __GFP_IO if it's simply going to swap,
++		 *    not to fs). In this case mark the page for immediate
++		 *    reclaim and continue scanning.
++		 *
++		 *    Require may_enter_fs because we would wait on fs, which
++		 *    may not have submitted IO yet. And the loop driver might
++		 *    enter reclaim, and deadlock if it waits on a page for
++		 *    which it is needed to do the write (loop masks off
++		 *    __GFP_IO|__GFP_FS for this reason); but more thought
++		 *    would probably show more reasons.
++		 *
++		 * 3) Legacy memcg encounters a page that is already marked
++		 *    PageReclaim. memcg does not have any dirty pages
++		 *    throttling so we could easily OOM just because too many
++		 *    pages are in writeback and there is nothing else to
++		 *    reclaim. Wait for the writeback to complete.
++		 */
++		if (PageWriteback(page)) {
++			/* Case 1 above */
++			if (current_is_kswapd() &&
++			    PageReclaim(page) &&
++			    test_bit(PGDAT_WRITEBACK, &pgdat->flags)) {
++				nr_immediate++;
++				goto keep_locked;
++
++			/* Case 2 above */
++			} else if (sane_reclaim(sc) ||
++			    !PageReclaim(page) || !may_enter_fs) {
++				/*
++				 * This is slightly racy - end_page_writeback()
++				 * might have just cleared PageReclaim, then
++				 * setting PageReclaim here end up interpreted
++				 * as PageReadahead - but that does not matter
++				 * enough to care.  What we do want is for this
++				 * page to have PageReclaim set next time memcg
++				 * reclaim reaches the tests above, so it will
++				 * then wait_on_page_writeback() to avoid OOM;
++				 * and it's also appropriate in global reclaim.
++				 */
++				SetPageReclaim(page);
++				nr_writeback++;
++				goto keep_locked;
++
++			/* Case 3 above */
++			} else {
++				unlock_page(page);
++				wait_on_page_writeback(page);
++				/* then go back and try same page again */
++				list_add_tail(&page->lru, page_list);
++				continue;
++			}
++		}
++
++		if (!force_reclaim)
++			references = page_check_references(page, sc);
++
++		switch (references) {
++		case PAGEREF_ACTIVATE:
++			goto activate_locked;
++		case PAGEREF_KEEP:
++			goto keep_locked;
++		case PAGEREF_RECLAIM:
++		case PAGEREF_RECLAIM_CLEAN:
++			; /* try to reclaim the page below */
++		}
++
++		/*
++		 * Anonymous process memory has backing store?
++		 * Try to allocate it some swap space here.
++		 */
++		if (PageAnon(page) && !PageSwapCache(page)) {
++			if (!(sc->gfp_mask & __GFP_IO))
++				goto keep_locked;
++			if (!add_to_swap(page, page_list))
++				goto activate_locked;
++			lazyfree = true;
++			may_enter_fs = 1;
++
++			/* Adding to swap updated mapping */
++			mapping = page_mapping(page);
++		} else if (unlikely(PageTransHuge(page))) {
++			/* Split file THP */
++			if (split_huge_page_to_list(page, page_list))
++				goto keep_locked;
++		}
++
++		VM_BUG_ON_PAGE(PageTransHuge(page), page);
++
++		/*
++		 * The page is mapped into the page tables of one or more
++		 * processes. Try to unmap it here.
++		 */
++		if (page_mapped(page) && mapping) {
++			switch (ret = try_to_unmap(page, lazyfree ?
++				(ttu_flags | TTU_BATCH_FLUSH | TTU_LZFREE) :
++				(ttu_flags | TTU_BATCH_FLUSH))) {
++			case SWAP_FAIL:
++				goto activate_locked;
++			case SWAP_AGAIN:
++				goto keep_locked;
++			case SWAP_MLOCK:
++				goto cull_mlocked;
++			case SWAP_LZFREE:
++				goto lazyfree;
++			case SWAP_SUCCESS:
++				; /* try to free the page below */
++			}
++		}
++
++		if (PageDirty(page)) {
++			/*
++			 * Only kswapd can writeback filesystem pages to
++			 * avoid risk of stack overflow but only writeback
++			 * if many dirty pages have been encountered.
++			 */
++			if (page_is_file_cache(page) &&
++					(!current_is_kswapd() ||
++					 !test_bit(PGDAT_DIRTY, &pgdat->flags))) {
++				/*
++				 * Immediately reclaim when written back.
++				 * Similar in principal to deactivate_page()
++				 * except we already have the page isolated
++				 * and know it's dirty
++				 */
++				inc_node_page_state(page, NR_VMSCAN_IMMEDIATE);
++				SetPageReclaim(page);
++
++				goto keep_locked;
++			}
++
++			if (references == PAGEREF_RECLAIM_CLEAN)
++				goto keep_locked;
++			if (!may_enter_fs)
++				goto keep_locked;
++			if (!sc->may_writepage)
++				goto keep_locked;
++
++			/*
++			 * Page is dirty. Flush the TLB if a writable entry
++			 * potentially exists to avoid CPU writes after IO
++			 * starts and then write it out here.
++			 */
++			try_to_unmap_flush_dirty();
++			switch (pageout(page, mapping, sc)) {
++			case PAGE_KEEP:
++				goto keep_locked;
++			case PAGE_ACTIVATE:
++				goto activate_locked;
++			case PAGE_SUCCESS:
++				if (PageWriteback(page))
++					goto keep;
++				if (PageDirty(page))
++					goto keep;
++
++				/*
++				 * A synchronous write - probably a ramdisk.  Go
++				 * ahead and try to reclaim the page.
++				 */
++				if (!trylock_page(page))
++					goto keep;
++				if (PageDirty(page) || PageWriteback(page))
++					goto keep_locked;
++				mapping = page_mapping(page);
++			case PAGE_CLEAN:
++				; /* try to free the page below */
++			}
++		}
++
++		/*
++		 * If the page has buffers, try to free the buffer mappings
++		 * associated with this page. If we succeed we try to free
++		 * the page as well.
++		 *
++		 * We do this even if the page is PageDirty().
++		 * try_to_release_page() does not perform I/O, but it is
++		 * possible for a page to have PageDirty set, but it is actually
++		 * clean (all its buffers are clean).  This happens if the
++		 * buffers were written out directly, with submit_bh(). ext3
++		 * will do this, as well as the blockdev mapping.
++		 * try_to_release_page() will discover that cleanness and will
++		 * drop the buffers and mark the page clean - it can be freed.
++		 *
++		 * Rarely, pages can have buffers and no ->mapping.  These are
++		 * the pages which were not successfully invalidated in
++		 * truncate_complete_page().  We try to drop those buffers here
++		 * and if that worked, and the page is no longer mapped into
++		 * process address space (page_count == 1) it can be freed.
++		 * Otherwise, leave the page on the LRU so it is swappable.
++		 */
++		if (page_has_private(page)) {
++			if (!try_to_release_page(page, sc->gfp_mask))
++				goto activate_locked;
++			if (!mapping && page_count(page) == 1) {
++				unlock_page(page);
++				if (put_page_testzero(page))
++					goto free_it;
++				else {
++					/*
++					 * rare race with speculative reference.
++					 * the speculative reference will free
++					 * this page shortly, so we may
++					 * increment nr_reclaimed here (and
++					 * leave it off the LRU).
++					 */
++					nr_reclaimed++;
++					continue;
++				}
++			}
++		}
++
++lazyfree:
++		if (!mapping || !__remove_mapping(mapping, page, true))
++			goto keep_locked;
++
++		/*
++		 * At this point, we have no other references and there is
++		 * no way to pick any more up (removed from LRU, removed
++		 * from pagecache). Can use non-atomic bitops now (and
++		 * we obviously don't have to worry about waking up a process
++		 * waiting on the page lock, because there are no references.
++		 */
++		__ClearPageLocked(page);
++free_it:
++		if (ret == SWAP_LZFREE)
++			count_vm_event(PGLAZYFREED);
++
++		nr_reclaimed++;
++
++		/*
++		 * Is there need to periodically free_page_list? It would
++		 * appear not as the counts should be low
++		 */
++		list_add(&page->lru, &free_pages);
++		continue;
++
++cull_mlocked:
++		if (PageSwapCache(page))
++			try_to_free_swap(page);
++		unlock_page(page);
++		list_add(&page->lru, &ret_pages);
++		continue;
++
++activate_locked:
++		/* Not a candidate for swapping, so reclaim swap space. */
++		if (PageSwapCache(page) && mem_cgroup_swap_full(page))
++			try_to_free_swap(page);
++		VM_BUG_ON_PAGE(PageActive(page), page);
++		SetPageActive(page);
++		pgactivate++;
++keep_locked:
++		unlock_page(page);
++keep:
++		list_add(&page->lru, &ret_pages);
++		VM_BUG_ON_PAGE(PageLRU(page) || PageUnevictable(page), page);
++	}
++
++	mem_cgroup_uncharge_list(&free_pages);
++	try_to_unmap_flush();
++	free_hot_cold_page_list(&free_pages, true);
++
++	list_splice(&ret_pages, page_list);
++	count_vm_events(PGACTIVATE, pgactivate);
++
++	*ret_nr_dirty += nr_dirty;
++	*ret_nr_congested += nr_congested;
++	*ret_nr_unqueued_dirty += nr_unqueued_dirty;
++	*ret_nr_writeback += nr_writeback;
++	*ret_nr_immediate += nr_immediate;
++	return nr_reclaimed;
++}
++// jiacheng end
++
+ unsigned long reclaim_clean_pages_from_list(struct zone *zone,
+ 					    struct list_head *page_list)
+ {
+-- 
+2.34.1
+
+
+From 60cb37f050227915a973f801419a204569fc8f56 Mon Sep 17 00:00:00 2001
+From: jiachengh <jiacheng.huang@outlook.com>
+Date: Mon, 4 Jul 2022 02:13:25 +0800
+Subject: [PATCH 2/4] madvice cold
+
+Change-Id: Id42661a80ce930e75ebf3fd056665489eaa8a307
+Signed-off-by: jiachengh <jiacheng.huang@outlook.com>
+---
+ arch/arm64/include/asm/unistd.h   |  5 ++++-
+ arch/arm64/include/asm/unistd32.h |  4 ++++
+ include/linux/syscalls.h          |  3 +++
+ include/uapi/asm-generic/unistd.h |  7 ++++++-
+ jiachenghack/jiachenghack.c       | 16 ++++++++++++----
+ mm/memory.c                       |  4 ++++
+ mm/page_alloc.c                   |  2 ++
+ 7 files changed, 35 insertions(+), 6 deletions(-)
+
+diff --git a/arch/arm64/include/asm/unistd.h b/arch/arm64/include/asm/unistd.h
+index 63469acc5992..4c0a8cceb201 100644
+--- a/arch/arm64/include/asm/unistd.h
++++ b/arch/arm64/include/asm/unistd.h
+@@ -44,7 +44,10 @@
+ #define __ARM_NR_compat_cacheflush	(__ARM_NR_COMPAT_BASE+2)
+ #define __ARM_NR_compat_set_tls		(__ARM_NR_COMPAT_BASE+5)
+ 
+-#define __NR_compat_syscalls		435
++// jiacheng start
++#define __NR_compat_syscalls		436
++// #define __NR_compat_syscalls		435
++// jiacheng end
+ #endif
+ 
+ #define __ARCH_WANT_SYS_CLONE
+diff --git a/arch/arm64/include/asm/unistd32.h b/arch/arm64/include/asm/unistd32.h
+index 491a1914e830..0c1b4d6228ca 100644
+--- a/arch/arm64/include/asm/unistd32.h
++++ b/arch/arm64/include/asm/unistd32.h
+@@ -813,6 +813,10 @@ __SYSCALL(__NR_pwritev2, compat_sys_pwritev2)
+ __SYSCALL(__NR_pidfd_send_signal, sys_pidfd_send_signal)
+ #define __NR_pidfd_open 434
+ __SYSCALL(__NR_pidfd_open, sys_pidfd_open)
++// jiacheng start
++#define __NR_jiacheng_printk 435
++__SYSCALL(__NR_jiacheng_printk, sys_jiacheng_printk)
++// jiacheng end
+ 
+ /*
+  * Please add new compat syscalls above this comment and update
+diff --git a/include/linux/syscalls.h b/include/linux/syscalls.h
+index 06c3550dbf76..c048d94a2a20 100644
+--- a/include/linux/syscalls.h
++++ b/include/linux/syscalls.h
+@@ -485,6 +485,9 @@ asmlinkage long sys_munlock(unsigned long start, size_t len);
+ asmlinkage long sys_mlockall(int flags);
+ asmlinkage long sys_munlockall(void);
+ asmlinkage long sys_madvise(unsigned long start, size_t len, int behavior);
++// jiacheng start
++asmlinkage long sys_jiacheng_printk(const char __user *info, unsigned long size);
++// jiacheng end
+ asmlinkage long sys_mincore(unsigned long start, size_t len,
+ 				unsigned char __user * vec);
+ 
+diff --git a/include/uapi/asm-generic/unistd.h b/include/uapi/asm-generic/unistd.h
+index 9fb4a5707a36..b0f5f95d01a2 100644
+--- a/include/uapi/asm-generic/unistd.h
++++ b/include/uapi/asm-generic/unistd.h
+@@ -735,8 +735,13 @@ __SYSCALL(__NR_pidfd_send_signal, sys_pidfd_send_signal)
+ #define __NR_pidfd_open 434
+ __SYSCALL(__NR_pidfd_open, sys_pidfd_open)
+ 
++// jiacheng start
++// #undef __NR_syscalls
++// #define __NR_syscalls 435
++
+ #undef __NR_syscalls
+-#define __NR_syscalls 435
++#define __NR_syscalls 436
++// jiacheng end
+ 
+ /*
+  * All syscalls below here should go away really,
+diff --git a/jiachenghack/jiachenghack.c b/jiachenghack/jiachenghack.c
+index 8a8de4d0f3a0..f0660c50d95c 100644
+--- a/jiachenghack/jiachenghack.c
++++ b/jiachenghack/jiachenghack.c
+@@ -1,5 +1,6 @@
+-#include "jiachenghack.h"
++#include <linux/syscalls.h>
+ 
++#include "jiachenghack.h"
+ 
+ static int jiacheng_main_thread(void * params) {
+ 	while(1) {
+@@ -36,7 +37,7 @@ void jiacheng_main(void) {
+ 	struct task_struct *tsk;
+ 	int pid;
+ 	
+-	pr_info("jiacheng hack start ---> 20201212 \n");
++	pr_info("jiacheng hack start ---> 20210922 \n");
+ 
+ 	pid = kernel_thread(jiacheng_main_thread, NULL, CLONE_FS | CLONE_FILES);
+ 
+@@ -46,8 +47,15 @@ void jiacheng_main(void) {
+ 	rcu_read_unlock();
+ }
+ 
+-
+-
++// Implementation sys_jiacheng_printk System Call
++SYSCALL_DEFINE2(jiacheng_printk, const char __user *, info, unsigned long, size) {
++	char buffer[size];
++	if(copy_from_user(buffer, info, size)) {
++		return -EFAULT;
++	}
++	printk(buffer);
++	return 0;
++}
+ 
+ // 实现/proc/runtime_write
+ static ssize_t runtime_write(struct file *file, const char __user *buf, size_t count, loff_t *ppos) {
+diff --git a/mm/memory.c b/mm/memory.c
+index 32b954bec944..f4a748b94916 100644
+--- a/mm/memory.c
++++ b/mm/memory.c
+@@ -3611,6 +3611,10 @@ static int __handle_mm_fault(struct vm_area_struct *vma, unsigned long address,
+ 	pgd_t *pgd;
+ 	pud_t *pud;
+ 
++	// jiacheng start
++	// printk("jiacheng memory.c 3606 address= %lX, flags= %d, pid= %d, tgid= %d\n", address, flags, current->pid, current->tgid);
++	// jiacheng end
++
+ 	pgd = pgd_offset(mm, address);
+ 	pud = pud_alloc(mm, pgd, address);
+ 	if (!pud)
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index 9e460ec997b6..4ad3c745d6e9 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -3869,6 +3869,8 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
+ 	if (read_mems_allowed_retry(cpuset_mems_cookie))
+ 		goto retry_cpuset;
+ 
++	// jiacheng start
++	// jiacheng end
+ 	/* Reclaim has failed us, start killing things */
+ 	page = __alloc_pages_may_oom(gfp_mask, order, ac, &did_some_progress);
+ 	if (page)
+-- 
+2.34.1
+
+
+From d18910aec38a8b47a73d1c1cc2e6ee72e3bd5828 Mon Sep 17 00:00:00 2001
+From: jiachengh <jiacheng.huang@outlook.com>
+Date: Mon, 8 Aug 2022 22:32:09 +0800
+Subject: [PATCH 3/4] page io
+
+Change-Id: I5d330c5725a0ef436b4734278c5e2d51fcaf266e
+Signed-off-by: jiachengh <jiacheng.huang@outlook.com>
+---
+ mm/page_io.c | 16 +++++++++++++++-
+ 1 file changed, 15 insertions(+), 1 deletion(-)
+
+diff --git a/mm/page_io.c b/mm/page_io.c
+index efe6fd67cb0e..f3f3ce7eb3d5 100644
+--- a/mm/page_io.c
++++ b/mm/page_io.c
+@@ -236,7 +236,9 @@ int generic_swapfile_activate(struct swap_info_struct *sis,
+ int swap_writepage(struct page *page, struct writeback_control *wbc)
+ {
+ 	int ret = 0;
+-
++	// jiacheng start
++	printk("jiacheng debug page_io.c 240 swap_writepage()");
++	// jiacheng end
+ 	if (try_to_free_swap(page)) {
+ 		unlock_page(page);
+ 		goto out;
+@@ -285,6 +287,9 @@ int __swap_writepage(struct page *page, struct writeback_control *wbc,
+ 		ret = mapping->a_ops->direct_IO(&kiocb, &from);
+ 		if (ret == PAGE_SIZE) {
+ 			count_vm_event(PSWPOUT);
++			// jiacheng start
++			printk("jiacheng debug count_vm_event()");
++			// jiacheng end
+ 			ret = 0;
+ 		} else {
+ 			/*
+@@ -309,6 +314,9 @@ int __swap_writepage(struct page *page, struct writeback_control *wbc,
+ 	ret = bdev_write_page(sis->bdev, swap_page_sector(page), page, wbc);
+ 	if (!ret) {
+ 		count_vm_event(PSWPOUT);
++		// jiacheng start
++		printk("jiacheng debug count_vm_event()");
++		// jiacheng end
+ 		return 0;
+ 	}
+ 
+@@ -325,6 +333,9 @@ int __swap_writepage(struct page *page, struct writeback_control *wbc,
+ 	else
+ 		bio_set_op_attrs(bio, REQ_OP_WRITE, 0);
+ 	count_vm_event(PSWPOUT);
++	// jiacheng start
++	printk("jiacheng debug count_vm_event()");
++	// jiacheng end
+ 	set_page_writeback(page);
+ 	unlock_page(page);
+ 	submit_bio(bio);
+@@ -338,6 +349,9 @@ int swap_readpage(struct page *page)
+ 	int ret = 0;
+ 	struct swap_info_struct *sis = page_swap_info(page);
+ 
++	// jiacheng start
++	printk("jiacheng debug page_io.c 344 swap_readpage()");
++	// jiacheng end
+ 	VM_BUG_ON_PAGE(!PageSwapCache(page), page);
+ 	VM_BUG_ON_PAGE(!PageLocked(page), page);
+ 	VM_BUG_ON_PAGE(PageUptodate(page), page);
+-- 
+2.34.1
+
+
+From bd7322bd3fece331a36187db6572b1cae60bdb09 Mon Sep 17 00:00:00 2001
+From: jiachengh <jiacheng.huang@outlook.com>
+Date: Mon, 18 Mar 2024 14:25:32 +0800
+Subject: [PATCH 4/4] update the madvise system call for the RGS
+
+Change-Id: I0a226fed548ae94bdbf758f196821e6382b804af
+---
+ include/asm-generic/tlb.h              |  14 +
+ include/linux/mmzone.h                 |   4 +
+ include/linux/pagewalk.h               |  73 +++++
+ include/linux/sched/mm.h               | 392 +++++++++++++++++++++++
+ include/linux/sync_core.h              |  21 ++
+ include/linux/vmstat.h                 |  15 +
+ include/uapi/asm-generic/mman-common.h |   3 +-
+ jiachenghack/jiachenghack.c            |   3 +-
+ mm/internal.h                          |   7 +
+ mm/jiachenghack_mm.c                   |  13 -
+ mm/madvise.c                           | 414 ++++++++++++++++++++++++-
+ mm/memory.c                            |   4 -
+ mm/page_alloc.c                        |   2 -
+ mm/page_io.c                           |  44 ++-
+ mm/vmscan.c                            |   3 +
+ 15 files changed, 964 insertions(+), 48 deletions(-)
+ create mode 100644 include/linux/pagewalk.h
+ create mode 100644 include/linux/sched/mm.h
+ create mode 100644 include/linux/sync_core.h
+
+diff --git a/include/asm-generic/tlb.h b/include/asm-generic/tlb.h
+index c6d667187608..303fe75f97f4 100644
+--- a/include/asm-generic/tlb.h
++++ b/include/asm-generic/tlb.h
+@@ -172,6 +172,20 @@ static inline void tlb_remove_page(struct mmu_gather *tlb, struct page *page)
+ 	return tlb_remove_page_size(tlb, page, PAGE_SIZE);
+ }
+ 
++// jiacheng start
++static inline void tlb_change_page_size(struct mmu_gather *tlb, 
++										unsigned int page_size) 
++{
++#ifdef CONFIG_MMU_GATHER_PAGE_SIZE
++	if (tlb->page_size && tlb->page_size != page_size) {
++		if (!tlb->fullmm && !tlb->need_flush_all)
++			tlb_flush_mmu(tlb);
++	}
++	tlb->page_size = page_size;
++#endif
++}
++// jiacheng end
++
+ static inline bool __tlb_remove_pte_page(struct mmu_gather *tlb, struct page *page)
+ {
+ 	/* active->nr should be zero when we call this */
+diff --git a/include/linux/mmzone.h b/include/linux/mmzone.h
+index d0ec47e6b293..e93433242e39 100644
+--- a/include/linux/mmzone.h
++++ b/include/linux/mmzone.h
+@@ -252,6 +252,10 @@ struct zone_reclaim_stat {
+ 	unsigned long		recent_scanned[2];
+ };
+ 
++// jiacheng start
++#define ANON_AND_FILE 2
++// jiacheng end
++
+ struct lruvec {
+ 	struct list_head		lists[NR_LRU_LISTS];
+ 	struct zone_reclaim_stat	reclaim_stat;
+diff --git a/include/linux/pagewalk.h b/include/linux/pagewalk.h
+new file mode 100644
+index 000000000000..48fe5024f163
+--- /dev/null
++++ b/include/linux/pagewalk.h
+@@ -0,0 +1,73 @@
++// jiacheng start
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef _LINUX_PAGEWALK_H
++#define _LINUX_PAGEWALK_H
++
++#include <linux/mm.h>
++
++struct mm_walk;
++
++/**
++ * struct mm_walk_ops - callbacks for walk_page_range
++ * @pgd_entry:		if set, called for each non-empty PGD (top-level) entry
++ * @p4d_entry:		if set, called for each non-empty P4D entry
++ * @pud_entry:		if set, called for each non-empty PUD entry
++ * @pmd_entry:		if set, called for each non-empty PMD entry
++ *			this handler is required to be able to handle
++ *			pmd_trans_huge() pmds.  They may simply choose to
++ *			split_huge_page() instead of handling it explicitly.
++ * @pte_entry:		if set, called for each non-empty PTE (lowest-level)
++ *			entry
++ * @pte_hole:		if set, called for each hole at all levels,
++ *			depth is -1 if not known, 0:PGD, 1:P4D, 2:PUD, 3:PMD
++ *			4:PTE. Any folded depths (where PTRS_PER_P?D is equal
++ *			to 1) are skipped.
++ * @hugetlb_entry:	if set, called for each hugetlb entry
++ * @test_walk:		caller specific callback function to determine whether
++ *			we walk over the current vma or not. Returning 0 means
++ *			"do page table walk over the current vma", returning
++ *			a negative value means "abort current page table walk
++ *			right now" and returning 1 means "skip the current vma"
++ * @pre_vma:            if set, called before starting walk on a non-null vma.
++ * @post_vma:           if set, called after a walk on a non-null vma, provided
++ *                      that @pre_vma and the vma walk succeeded.
++ *
++ * p?d_entry callbacks are called even if those levels are folded on a
++ * particular architecture/configuration.
++ */
++struct mm_walk_ops {
++	int (*pgd_entry)(pgd_t *pgd, unsigned long addr,
++			 unsigned long next, struct mm_walk *walk);
++	int (*pud_entry)(pud_t *pud, unsigned long addr,
++			 unsigned long next, struct mm_walk *walk);
++	int (*pmd_entry)(pmd_t *pmd, unsigned long addr,
++			 unsigned long next, struct mm_walk *walk);
++	int (*pte_entry)(pte_t *pte, unsigned long addr,
++			 unsigned long next, struct mm_walk *walk);
++	int (*pte_hole)(unsigned long addr, unsigned long next,
++			int depth, struct mm_walk *walk);
++	int (*hugetlb_entry)(pte_t *pte, unsigned long hmask,
++			     unsigned long addr, unsigned long next,
++			     struct mm_walk *walk);
++	int (*test_walk)(unsigned long addr, unsigned long next,
++			struct mm_walk *walk);
++	int (*pre_vma)(unsigned long start, unsigned long end,
++		       struct mm_walk *walk);
++	void (*post_vma)(struct mm_walk *walk);
++};
++
++/*
++ * Action for pud_entry / pmd_entry callbacks.
++ * ACTION_SUBTREE is the default
++ */
++enum page_walk_action {
++	/* Descend to next level, splitting huge pages if needed and possible */
++	ACTION_SUBTREE = 0,
++	/* Continue to next entry at this level (ignoring any subtree) */
++	ACTION_CONTINUE = 1,
++	/* Call again for this entry */
++	ACTION_AGAIN = 2
++};
++
++#endif /* _LINUX_PAGEWALK_H */
++// jiacheng end
+\ No newline at end of file
+diff --git a/include/linux/sched/mm.h b/include/linux/sched/mm.h
+new file mode 100644
+index 000000000000..8318f9d44d9e
+--- /dev/null
++++ b/include/linux/sched/mm.h
+@@ -0,0 +1,392 @@
++// jiacheng start
++// copy from 5.15
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef _LINUX_SCHED_MM_H
++#define _LINUX_SCHED_MM_H
++
++#include <linux/kernel.h>
++#include <linux/atomic.h>
++#include <linux/sched.h>
++#include <linux/mm_types.h>
++#include <linux/gfp.h>
++#include <linux/sync_core.h>
++
++/*
++ * Routines for handling mm_structs
++ */
++extern struct mm_struct *mm_alloc(void);
++
++/**
++ * mmgrab() - Pin a &struct mm_struct.
++ * @mm: The &struct mm_struct to pin.
++ *
++ * Make sure that @mm will not get freed even after the owning task
++ * exits. This doesn't guarantee that the associated address space
++ * will still exist later on and mmget_not_zero() has to be used before
++ * accessing it.
++ *
++ * This is a preferred way to pin @mm for a longer/unbounded amount
++ * of time.
++ *
++ * Use mmdrop() to release the reference acquired by mmgrab().
++ *
++ * See also <Documentation/vm/active_mm.rst> for an in-depth explanation
++ * of &mm_struct.mm_count vs &mm_struct.mm_users.
++ */
++static inline void mmgrab(struct mm_struct *mm)
++{
++	atomic_inc(&mm->mm_count);
++}
++
++extern void __mmdrop(struct mm_struct *mm);
++
++static inline void mmdrop(struct mm_struct *mm)
++{
++	/*
++	 * The implicit full barrier implied by atomic_dec_and_test() is
++	 * required by the membarrier system call before returning to
++	 * user-space, after storing to rq->curr.
++	 */
++	if (unlikely(atomic_dec_and_test(&mm->mm_count)))
++		__mmdrop(mm);
++}
++
++/**
++ * mmget() - Pin the address space associated with a &struct mm_struct.
++ * @mm: The address space to pin.
++ *
++ * Make sure that the address space of the given &struct mm_struct doesn't
++ * go away. This does not protect against parts of the address space being
++ * modified or freed, however.
++ *
++ * Never use this function to pin this address space for an
++ * unbounded/indefinite amount of time.
++ *
++ * Use mmput() to release the reference acquired by mmget().
++ *
++ * See also <Documentation/vm/active_mm.rst> for an in-depth explanation
++ * of &mm_struct.mm_count vs &mm_struct.mm_users.
++ */
++static inline void mmget(struct mm_struct *mm)
++{
++	atomic_inc(&mm->mm_users);
++}
++
++static inline bool mmget_not_zero(struct mm_struct *mm)
++{
++	return atomic_inc_not_zero(&mm->mm_users);
++}
++
++/* mmput gets rid of the mappings and all user-space */
++extern void mmput(struct mm_struct *);
++#ifdef CONFIG_MMU
++/* same as above but performs the slow path from the async context. Can
++ * be called from the atomic context as well
++ */
++void mmput_async(struct mm_struct *);
++#endif
++
++/* Grab a reference to a task's mm, if it is not already going away */
++extern struct mm_struct *get_task_mm(struct task_struct *task);
++/*
++ * Grab a reference to a task's mm, if it is not already going away
++ * and ptrace_may_access with the mode parameter passed to it
++ * succeeds.
++ */
++extern struct mm_struct *mm_access(struct task_struct *task, unsigned int mode);
++/* Remove the current tasks stale references to the old mm_struct on exit() */
++extern void exit_mm_release(struct task_struct *, struct mm_struct *);
++/* Remove the current tasks stale references to the old mm_struct on exec() */
++extern void exec_mm_release(struct task_struct *, struct mm_struct *);
++
++#ifdef CONFIG_MEMCG
++extern void mm_update_next_owner(struct mm_struct *mm);
++#else
++static inline void mm_update_next_owner(struct mm_struct *mm)
++{
++}
++#endif /* CONFIG_MEMCG */
++
++#ifdef CONFIG_MMU
++#ifndef arch_get_mmap_end
++#define arch_get_mmap_end(addr)	(TASK_SIZE)
++#endif
++
++#ifndef arch_get_mmap_base
++#define arch_get_mmap_base(addr, base) (base)
++#endif
++
++extern void arch_pick_mmap_layout(struct mm_struct *mm,
++				  struct rlimit *rlim_stack);
++extern unsigned long
++arch_get_unmapped_area(struct file *, unsigned long, unsigned long,
++		       unsigned long, unsigned long);
++extern unsigned long
++arch_get_unmapped_area_topdown(struct file *filp, unsigned long addr,
++			  unsigned long len, unsigned long pgoff,
++			  unsigned long flags);
++#else
++static inline void arch_pick_mmap_layout(struct mm_struct *mm,
++					 struct rlimit *rlim_stack) {}
++#endif
++
++static inline bool in_vfork(struct task_struct *tsk)
++{
++	bool ret;
++
++	/*
++	 * need RCU to access ->real_parent if CLONE_VM was used along with
++	 * CLONE_PARENT.
++	 *
++	 * We check real_parent->mm == tsk->mm because CLONE_VFORK does not
++	 * imply CLONE_VM
++	 *
++	 * CLONE_VFORK can be used with CLONE_PARENT/CLONE_THREAD and thus
++	 * ->real_parent is not necessarily the task doing vfork(), so in
++	 * theory we can't rely on task_lock() if we want to dereference it.
++	 *
++	 * And in this case we can't trust the real_parent->mm == tsk->mm
++	 * check, it can be false negative. But we do not care, if init or
++	 * another oom-unkillable task does this it should blame itself.
++	 */
++	rcu_read_lock();
++	ret = tsk->vfork_done &&
++			rcu_dereference(tsk->real_parent)->mm == tsk->mm;
++	rcu_read_unlock();
++
++	return ret;
++}
++
++/*
++ * Applies per-task gfp context to the given allocation flags.
++ * PF_MEMALLOC_NOIO implies GFP_NOIO
++ * PF_MEMALLOC_NOFS implies GFP_NOFS
++ * PF_MEMALLOC_PIN  implies !GFP_MOVABLE
++ */
++static inline gfp_t current_gfp_context(gfp_t flags)
++{
++	unsigned int pflags = READ_ONCE(current->flags);
++
++	if (unlikely(pflags & (PF_MEMALLOC_NOIO | PF_MEMALLOC_NOFS | PF_MEMALLOC_PIN))) {
++		/*
++		 * NOIO implies both NOIO and NOFS and it is a weaker context
++		 * so always make sure it makes precedence
++		 */
++		if (pflags & PF_MEMALLOC_NOIO)
++			flags &= ~(__GFP_IO | __GFP_FS);
++		else if (pflags & PF_MEMALLOC_NOFS)
++			flags &= ~__GFP_FS;
++
++		if (pflags & PF_MEMALLOC_PIN)
++			flags &= ~__GFP_MOVABLE;
++	}
++	return flags;
++}
++
++#ifdef CONFIG_LOCKDEP
++extern void __fs_reclaim_acquire(unsigned long ip);
++extern void __fs_reclaim_release(unsigned long ip);
++extern void fs_reclaim_acquire(gfp_t gfp_mask);
++extern void fs_reclaim_release(gfp_t gfp_mask);
++#else
++static inline void __fs_reclaim_acquire(unsigned long ip) { }
++static inline void __fs_reclaim_release(unsigned long ip) { }
++static inline void fs_reclaim_acquire(gfp_t gfp_mask) { }
++static inline void fs_reclaim_release(gfp_t gfp_mask) { }
++#endif
++
++/**
++ * might_alloc - Mark possible allocation sites
++ * @gfp_mask: gfp_t flags that would be used to allocate
++ *
++ * Similar to might_sleep() and other annotations, this can be used in functions
++ * that might allocate, but often don't. Compiles to nothing without
++ * CONFIG_LOCKDEP. Includes a conditional might_sleep() if @gfp allows blocking.
++ */
++static inline void might_alloc(gfp_t gfp_mask)
++{
++	fs_reclaim_acquire(gfp_mask);
++	fs_reclaim_release(gfp_mask);
++
++	might_sleep_if(gfpflags_allow_blocking(gfp_mask));
++}
++
++/**
++ * memalloc_noio_save - Marks implicit GFP_NOIO allocation scope.
++ *
++ * This functions marks the beginning of the GFP_NOIO allocation scope.
++ * All further allocations will implicitly drop __GFP_IO flag and so
++ * they are safe for the IO critical section from the allocation recursion
++ * point of view. Use memalloc_noio_restore to end the scope with flags
++ * returned by this function.
++ *
++ * This function is safe to be used from any context.
++ */
++static inline unsigned int memalloc_noio_save(void)
++{
++	unsigned int flags = current->flags & PF_MEMALLOC_NOIO;
++	current->flags |= PF_MEMALLOC_NOIO;
++	return flags;
++}
++
++/**
++ * memalloc_noio_restore - Ends the implicit GFP_NOIO scope.
++ * @flags: Flags to restore.
++ *
++ * Ends the implicit GFP_NOIO scope started by memalloc_noio_save function.
++ * Always make sure that the given flags is the return value from the
++ * pairing memalloc_noio_save call.
++ */
++static inline void memalloc_noio_restore(unsigned int flags)
++{
++	current->flags = (current->flags & ~PF_MEMALLOC_NOIO) | flags;
++}
++
++/**
++ * memalloc_nofs_save - Marks implicit GFP_NOFS allocation scope.
++ *
++ * This functions marks the beginning of the GFP_NOFS allocation scope.
++ * All further allocations will implicitly drop __GFP_FS flag and so
++ * they are safe for the FS critical section from the allocation recursion
++ * point of view. Use memalloc_nofs_restore to end the scope with flags
++ * returned by this function.
++ *
++ * This function is safe to be used from any context.
++ */
++static inline unsigned int memalloc_nofs_save(void)
++{
++	unsigned int flags = current->flags & PF_MEMALLOC_NOFS;
++	current->flags |= PF_MEMALLOC_NOFS;
++	return flags;
++}
++
++/**
++ * memalloc_nofs_restore - Ends the implicit GFP_NOFS scope.
++ * @flags: Flags to restore.
++ *
++ * Ends the implicit GFP_NOFS scope started by memalloc_nofs_save function.
++ * Always make sure that the given flags is the return value from the
++ * pairing memalloc_nofs_save call.
++ */
++static inline void memalloc_nofs_restore(unsigned int flags)
++{
++	current->flags = (current->flags & ~PF_MEMALLOC_NOFS) | flags;
++}
++
++static inline unsigned int memalloc_noreclaim_save(void)
++{
++	unsigned int flags = current->flags & PF_MEMALLOC;
++	current->flags |= PF_MEMALLOC;
++	return flags;
++}
++
++static inline void memalloc_noreclaim_restore(unsigned int flags)
++{
++	current->flags = (current->flags & ~PF_MEMALLOC) | flags;
++}
++
++static inline unsigned int memalloc_pin_save(void)
++{
++	unsigned int flags = current->flags & PF_MEMALLOC_PIN;
++
++	current->flags |= PF_MEMALLOC_PIN;
++	return flags;
++}
++
++static inline void memalloc_pin_restore(unsigned int flags)
++{
++	current->flags = (current->flags & ~PF_MEMALLOC_PIN) | flags;
++}
++
++#ifdef CONFIG_MEMCG
++DECLARE_PER_CPU(struct mem_cgroup *, int_active_memcg);
++/**
++ * set_active_memcg - Starts the remote memcg charging scope.
++ * @memcg: memcg to charge.
++ *
++ * This function marks the beginning of the remote memcg charging scope. All the
++ * __GFP_ACCOUNT allocations till the end of the scope will be charged to the
++ * given memcg.
++ *
++ * NOTE: This function can nest. Users must save the return value and
++ * reset the previous value after their own charging scope is over.
++ */
++static inline struct mem_cgroup *
++set_active_memcg(struct mem_cgroup *memcg)
++{
++	struct mem_cgroup *old;
++
++	if (!in_task()) {
++		old = this_cpu_read(int_active_memcg);
++		this_cpu_write(int_active_memcg, memcg);
++	} else {
++		old = current->active_memcg;
++		current->active_memcg = memcg;
++	}
++
++	return old;
++}
++#else
++static inline struct mem_cgroup *
++set_active_memcg(struct mem_cgroup *memcg)
++{
++	return NULL;
++}
++#endif
++
++#ifdef CONFIG_MEMBARRIER
++enum {
++	MEMBARRIER_STATE_PRIVATE_EXPEDITED_READY		= (1U << 0),
++	MEMBARRIER_STATE_PRIVATE_EXPEDITED			= (1U << 1),
++	MEMBARRIER_STATE_GLOBAL_EXPEDITED_READY			= (1U << 2),
++	MEMBARRIER_STATE_GLOBAL_EXPEDITED			= (1U << 3),
++	MEMBARRIER_STATE_PRIVATE_EXPEDITED_SYNC_CORE_READY	= (1U << 4),
++	MEMBARRIER_STATE_PRIVATE_EXPEDITED_SYNC_CORE		= (1U << 5),
++	MEMBARRIER_STATE_PRIVATE_EXPEDITED_RSEQ_READY		= (1U << 6),
++	MEMBARRIER_STATE_PRIVATE_EXPEDITED_RSEQ			= (1U << 7),
++};
++
++enum {
++	MEMBARRIER_FLAG_SYNC_CORE	= (1U << 0),
++	MEMBARRIER_FLAG_RSEQ		= (1U << 1),
++};
++
++#ifdef CONFIG_ARCH_HAS_MEMBARRIER_CALLBACKS
++#include <asm/membarrier.h>
++#endif
++
++static inline void membarrier_mm_sync_core_before_usermode(struct mm_struct *mm)
++{
++	if (current->mm != mm)
++		return;
++	if (likely(!(atomic_read(&mm->membarrier_state) &
++		     MEMBARRIER_STATE_PRIVATE_EXPEDITED_SYNC_CORE)))
++		return;
++	sync_core_before_usermode();
++}
++
++extern void membarrier_exec_mmap(struct mm_struct *mm);
++
++extern void membarrier_update_current_mm(struct mm_struct *next_mm);
++
++#else
++#ifdef CONFIG_ARCH_HAS_MEMBARRIER_CALLBACKS
++static inline void membarrier_arch_switch_mm(struct mm_struct *prev,
++					     struct mm_struct *next,
++					     struct task_struct *tsk)
++{
++}
++#endif
++static inline void membarrier_exec_mmap(struct mm_struct *mm)
++{
++}
++static inline void membarrier_mm_sync_core_before_usermode(struct mm_struct *mm)
++{
++}
++static inline void membarrier_update_current_mm(struct mm_struct *next_mm)
++{
++}
++#endif
++
++#endif /* _LINUX_SCHED_MM_H */
++// jiacheng end
+\ No newline at end of file
+diff --git a/include/linux/sync_core.h b/include/linux/sync_core.h
+new file mode 100644
+index 000000000000..013da4b8b327
+--- /dev/null
++++ b/include/linux/sync_core.h
+@@ -0,0 +1,21 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef _LINUX_SYNC_CORE_H
++#define _LINUX_SYNC_CORE_H
++
++#ifdef CONFIG_ARCH_HAS_SYNC_CORE_BEFORE_USERMODE
++#include <asm/sync_core.h>
++#else
++/*
++ * This is a dummy sync_core_before_usermode() implementation that can be used
++ * on all architectures which return to user-space through core serializing
++ * instructions.
++ * If your architecture returns to user-space through non-core-serializing
++ * instructions, you need to write your own functions.
++ */
++static inline void sync_core_before_usermode(void)
++{
++}
++#endif
++
++#endif /* _LINUX_SYNC_CORE_H */
++
+diff --git a/include/linux/vmstat.h b/include/linux/vmstat.h
+index 613771909b6e..0379296d7cbc 100644
+--- a/include/linux/vmstat.h
++++ b/include/linux/vmstat.h
+@@ -10,6 +10,21 @@
+ 
+ extern int sysctl_stat_interval;
+ 
++// jiacheng start
++struct reclaim_stat {
++	unsigned nr_dirty;
++	unsigned nr_unqueued_dirty;
++	unsigned nr_congested;
++	unsigned nr_writeback;
++	unsigned nr_immediate;
++	unsigned nr_pageout;
++	unsigned nr_activate[ANON_AND_FILE];
++	unsigned nr_ref_keep;
++	unsigned nr_unmap_fail;
++	unsigned nr_lazyfree_fail;
++};
++// jiacheng end
++
+ #ifdef CONFIG_VM_EVENT_COUNTERS
+ /*
+  * Light weight per cpu counter implementation.
+diff --git a/include/uapi/asm-generic/mman-common.h b/include/uapi/asm-generic/mman-common.h
+index 57b32661bf03..14d647adad20 100644
+--- a/include/uapi/asm-generic/mman-common.h
++++ b/include/uapi/asm-generic/mman-common.h
+@@ -59,7 +59,8 @@
+ #define MADV_DODUMP	17		/* Clear the MADV_DONTDUMP flag */
+ 
+ // jiacheng start
+-#define MADV_COLD 233
++#define MADV_RUNTIME_COLD 233
++#define MADV_RUNTIME_HOT 234
+ // jiacheng end
+ 
+ /* compatibility flags */
+diff --git a/jiachenghack/jiachenghack.c b/jiachenghack/jiachenghack.c
+index f0660c50d95c..59fd7a0053ef 100644
+--- a/jiachenghack/jiachenghack.c
++++ b/jiachenghack/jiachenghack.c
+@@ -22,8 +22,7 @@ static int jiacheng_main_thread(void * params) {
+ 			
+ 		// }
+ 
+-		msleep(60 * 1000);
+-		printk("jiacheng main after 60 seconds.\n"); 
++		msleep(5 * 1000);
+ 	}
+ 	return 0;
+ }
+diff --git a/mm/internal.h b/mm/internal.h
+index 9f6715873bb4..4cc65b58f6b9 100644
+--- a/mm/internal.h
++++ b/mm/internal.h
+@@ -43,6 +43,13 @@ int do_swap_page(struct fault_env *fe, pte_t orig_pte);
+ void free_pgtables(struct mmu_gather *tlb, struct vm_area_struct *start_vma,
+ 		unsigned long floor, unsigned long ceiling);
+ 
++// jiacheng start
++static inline bool can_madv_lru_vma(struct vm_area_struct *vma) 
++{
++	return !(vma->vm_flags & (VM_LOCKED|VM_HUGETLB|VM_PFNMAP));
++}
++// jiacheng end
++
+ static inline bool can_madv_dontneed_vma(struct vm_area_struct *vma)
+ {
+ 	return !(vma->vm_flags & (VM_LOCKED|VM_HUGETLB|VM_PFNMAP));
+diff --git a/mm/jiachenghack_mm.c b/mm/jiachenghack_mm.c
+index b4eb18535113..181b8c62e909 100644
+--- a/mm/jiachenghack_mm.c
++++ b/mm/jiachenghack_mm.c
+@@ -139,17 +139,4 @@ void jiacheng_page_range_cold(struct vm_area_struct *vma, unsigned long start, u
+ 		mmput(mm);
+ 	}
+ 	put_task_struct(task);
+-	// struct mm_struct *mm = vma->vm_mm;
+-	// struct mmu_gather tlb;
+-	// unsigned long end = start + size;
+-
+-	// lru_add_drain();
+-	// tlb_gather_mmu(&tlb, mm, start, end);
+-	// update_hiwater_rss(mm);
+-	// mmu_notifier_invalidate_range_start(mm, start, end);
+-	// for ( ; vma && vma->vm_start < end; vma = vma->vm_next)
+-	// 	unmap_single_vma(&tlb, vma, start, end, details);
+-	// mmu_notifier_invalidate_range_end(mm, start, end);
+-	// tlb_finish_mmu(&tlb, start, end);
+-	
+ } 
+\ No newline at end of file
+diff --git a/mm/madvise.c b/mm/madvise.c
+index cf0049684f19..3a4ee06c874b 100644
+--- a/mm/madvise.c
++++ b/mm/madvise.c
+@@ -28,7 +28,16 @@
+ #include "internal.h"
+ 
+ // jiacheng start
++#include <linux/page_idle.h>
++#include <linux/pagewalk.h>
+ #include <linux/jiacheng.h>
++
++
++struct madvise_walk_private {
++	struct mmu_gather *tlb;
++	bool pageout;
++};
++
+ // jiacheng end
+ 
+ /*
+@@ -44,7 +53,8 @@ static int madvise_need_mmap_write(int behavior)
+ 	case MADV_DONTNEED:
+ 	case MADV_FREE:
+ 	// jiacheng start
+-	case MADV_COLD:
++	case MADV_RUNTIME_HOT:
++	case MADV_RUNTIME_COLD:
+ 	// jiacheng end
+ 		return 0;
+ 	default:
+@@ -268,6 +278,385 @@ static long madvise_willneed(struct vm_area_struct *vma,
+ 	return 0;
+ }
+ 
++
++// jiacheng start
++static int madvise_cold_or_pageout_pte_range(pmd_t *pmd, 
++											 unsigned long addr, 
++											 unsigned long end,
++											 struct mm_walk *walk) 
++{
++	struct madvise_walk_private *private = walk->private;
++	struct mmu_gather *tlb = private->tlb;
++	bool pageout = private->pageout;
++	struct mm_struct *mm = tlb->mm;
++	struct vm_area_struct *vma = walk->vma;
++	pte_t *orig_pte, *pte, ptent;
++	spinlock_t *ptl;
++	struct page *page = NULL;
++	LIST_HEAD(page_list);
++
++	if (fatal_signal_pending(current))
++		return -EINTR;
++
++	// we do not handle huge page in android devices
++
++	tlb_change_page_size(tlb, PAGE_SIZE);
++	orig_pte = pte = pte_offset_map_lock(vma->vm_mm, pmd, addr, &ptl);
++	flush_tlb_batched_pending(mm);
++	arch_enter_lazy_mmu_mode();
++	for (; addr < end; pte++, addr += PAGE_SIZE) {
++		ptent = *pte;
++		if (pte_none(ptent)) {
++			continue;
++		}
++		if (!pte_present(ptent)) {
++			continue;
++		}
++		page = vm_normal_page(vma, addr, ptent);
++		if (!page) {
++			continue;
++		}
++		/*
++		 * Creating a THP page is expensive so split it only if we
++		 * are sure it's worth. Split it if we are only owner.
++		 */
++		if (PageTransCompound(page)) {
++			if (page_mapcount(page) != 1)
++				break;
++			get_page(page);
++			if (!trylock_page(page)) {
++				put_page(page);
++				break;
++			}
++			pte_unmap_unlock(orig_pte, ptl);
++			if (split_huge_page(page)) {
++				unlock_page(page);
++				put_page(page);
++				pte_offset_map_lock(mm, pmd, addr, &ptl);
++				break;
++			}
++			unlock_page(page);
++			put_page(page);
++			pte = pte_offset_map_lock(mm, pmd, addr, &ptl);
++			pte--;
++			addr -= PAGE_SIZE;
++			continue;
++		}
++		/*
++		 * Do not interfere with other mappings of this page and
++		 * non-LRU page.
++		 */
++		if (!PageLRU(page) || page_mapcount(page) != 1)
++			continue;
++		VM_BUG_ON_PAGE(PageTransCompound(page), page);
++		if (pte_young(ptent)) {
++			ptent = ptep_get_and_clear_full(mm, addr, pte, tlb->fullmm);
++			ptent = pte_mkold(ptent);
++			set_pte_at(mm, addr, pte, ptent);
++			tlb_remove_tlb_entry(tlb, pte, addr);
++		}
++		/*
++		 * We are deactivating a page for accelerating reclaiming.
++		 * VM couldn't reclaim the page unless we clear PG_young.
++		 * As a side effect, it makes confuse idle-page tracking
++		 * because they will miss recent referenced history.
++		 */
++		ClearPageReferenced(page);
++		test_and_clear_page_young(page);
++		if (pageout) {
++			if(!isolate_lru_page(page)) {
++				if (PageUnevictable(page)) {
++					putback_lru_page(page);
++				} else {
++					list_add(&page->lru, &page_list);
++				}
++			}
++		} else {
++			deactivate_page(page);
++		}
++	}
++	arch_leave_lazy_mmu_mode();
++	pte_unmap_unlock(orig_pte, ptl);
++	if (pageout) {
++		reclaim_pages(&page_list);
++	}
++	cond_resched();
++	return 0;
++}
++
++static int madvise_hot_pte_range(pmd_t *pmd, 
++								 unsigned long addr, 
++								 unsigned long end,
++								 struct mm_walk *walk) {
++	struct madvise_walk_private *private = walk->private;
++	struct mmu_gather *tlb = private->tlb;
++	struct mm_struct *mm = tlb->mm;
++	struct vm_area_struct *vma = walk->vma;
++	pte_t *orig_pte, *pte, ptent;
++	spinlock_t *ptl;
++	struct page *page = NULL;
++
++	if (fatal_signal_pending(current))
++		return -EINTR;
++
++	// we do not handle huge page in android devices
++
++	tlb_change_page_size(tlb, PAGE_SIZE);
++	orig_pte = pte = pte_offset_map_lock(vma->vm_mm, pmd, addr, &ptl);
++	flush_tlb_batched_pending(mm);
++	arch_enter_lazy_mmu_mode();
++	for (; addr < end; pte++, addr += PAGE_SIZE) {
++		ptent = *pte;
++		if (pte_none(ptent)) {
++			continue;
++		}
++		if (!pte_present(ptent)) {
++			continue;
++		}
++		page = vm_normal_page(vma, addr, ptent);
++		if (!page) {
++			continue;
++		}
++		/*
++		 * Creating a THP page is expensive so split it only if we
++		 * are sure it's worth. Split it if we are only owner.
++		 */
++		if (PageTransCompound(page)) {
++			if (page_mapcount(page) != 1)
++				break;
++			get_page(page);
++			if (!trylock_page(page)) {
++				put_page(page);
++				break;
++			}
++			pte_unmap_unlock(orig_pte, ptl);
++			if (split_huge_page(page)) {
++				unlock_page(page);
++				put_page(page);
++				pte_offset_map_lock(mm, pmd, addr, &ptl);
++				break;
++			}
++			unlock_page(page);
++			put_page(page);
++			pte = pte_offset_map_lock(mm, pmd, addr, &ptl);
++			pte--;
++			addr -= PAGE_SIZE;
++			continue;
++		}
++		/*
++		 * Do not interfere with other mappings of this page and
++		 * non-LRU page.
++		 */
++		if (!PageLRU(page) || page_mapcount(page) != 1)
++			continue;
++		VM_BUG_ON_PAGE(PageTransCompound(page), page);
++		if (pte_young(ptent)) {
++			ptent = ptep_get_and_clear_full(mm, addr, pte, tlb->fullmm);
++			ptent = pte_mkold(ptent);
++			set_pte_at(mm, addr, pte, ptent);
++			tlb_remove_tlb_entry(tlb, pte, addr);
++		}
++		SetPageReferenced(page);
++		set_page_young(page);
++		
++		activate_page(page);
++	}
++	arch_leave_lazy_mmu_mode();
++	pte_unmap_unlock(orig_pte, ptl);
++
++	cond_resched();
++	return 0;
++}
++
++
++
++static void madvise_cold_page_range(struct mmu_gather *tlb,
++									struct vm_area_struct *vma,
++									unsigned long addr, 
++									unsigned long end)
++{
++	struct task_struct *task;
++	struct mm_struct *mm;
++	struct madvise_walk_private walk_private = {
++		.pageout = false,
++		.tlb = tlb,
++	};
++
++	rcu_read_lock();
++	task = current;
++	get_task_struct(task);
++	rcu_read_unlock();
++
++	mm = get_task_mm(task);
++
++	if (mm) {
++		struct mm_walk cold_walk = {
++			.pmd_entry = madvise_cold_or_pageout_pte_range,
++			.mm = mm,
++			.vma = vma,
++			.private = &walk_private,
++		};
++		tlb_start_vma(tlb, vma);
++		walk_page_range(addr, end, &cold_walk);
++		tlb_end_vma(tlb, vma);
++		mmput(mm);
++	}
++	put_task_struct(task);
++}
++
++static void madvise_pageout_page_range(struct mmu_gather *tlb,
++									   struct vm_area_struct *vma,
++									   unsigned long addr, 
++									   unsigned long end) 
++{
++	struct task_struct *task;
++	struct mm_struct *mm;
++	struct madvise_walk_private walk_private = {
++		.pageout = true,
++		.tlb = tlb,
++	};
++
++	rcu_read_lock();
++	task = current;
++	get_task_struct(task);
++	rcu_read_unlock();
++
++	mm = get_task_mm(task);
++
++	if (mm) {
++		struct mm_walk cold_walk = {
++			.pmd_entry = madvise_cold_or_pageout_pte_range,
++			.mm = mm,
++			.vma = vma,
++			.private = &walk_private,
++		};
++		tlb_start_vma(tlb, vma);
++		walk_page_range(addr, end, &cold_walk);
++		tlb_end_vma(tlb, vma);
++		mmput(mm);
++	}
++	put_task_struct(task);
++}
++
++
++static void madvise_hot_page_range(struct mmu_gather *tlb,
++								   struct vm_area_struct *vma,
++								   unsigned long addr, 
++								   unsigned long end) 
++{
++	struct task_struct *task;
++	struct mm_struct *mm;
++	struct madvise_walk_private walk_private = {
++		.tlb = tlb,
++	};
++
++	rcu_read_lock();
++	task = current;
++	get_task_struct(task);
++	rcu_read_unlock();
++
++	mm = get_task_mm(task);
++
++	if (mm) {
++		struct mm_walk hot_walk = {
++			.pmd_entry = madvise_hot_pte_range,
++			.mm = mm,
++			.vma = vma,
++			.private = &walk_private,
++		};
++		tlb_start_vma(tlb, vma);
++		walk_page_range(addr, end, &hot_walk);
++		tlb_end_vma(tlb, vma);
++		mmput(mm);
++	}
++	put_task_struct(task);
++}
++
++
++static long madvise_pageout(struct vm_area_struct *vma,
++							struct vm_area_struct **prev,
++							unsigned long start_addr, 
++							unsigned long end_addr) 
++{
++	struct mm_struct *mm = vma->vm_mm;
++	struct mmu_gather tlb;
++
++	printk("jiacheng madvise_pageout() start_addr= %lx end_addr= %lx size(KB)= %lu",
++		    start_addr, end_addr, (end_addr - start_addr) >> 10);
++	*prev = vma;
++	if (!can_madv_lru_vma(vma))
++		return -EINVAL;
++	// if (!can_do_pageout(vma))
++	// 	return 0;
++	lru_add_drain();
++	tlb_gather_mmu(&tlb, mm, start_addr, end_addr);
++	madvise_pageout_page_range(&tlb, vma, start_addr, end_addr);
++	tlb_finish_mmu(&tlb, start_addr, end_addr);
++
++	return 0;
++}
++
++__attribute__((unused)) 
++static long madvise_cold_runtime(struct vm_area_struct *vma,
++								 struct vm_area_struct **prev,
++								 unsigned long start_addr,
++								 unsigned long end_addr) 
++{
++	struct mm_struct *mm = vma->vm_mm;
++	struct mmu_gather tlb;
++		
++	printk("jiacheng madvise_cold_runtime() start_addr= %lu end_addr= %lu ", start_addr, end_addr);
++	*prev = vma;
++	if (!can_madv_lru_vma(vma)) {
++		return -EINVAL;
++	}
++	lru_add_drain();  /* Push any new pages onto the LRU now */
++	tlb_gather_mmu(&tlb, mm, start_addr, end_addr);
++	madvise_cold_page_range(&tlb, vma, start_addr, end_addr);
++	tlb_finish_mmu(&tlb, start_addr, end_addr);
++
++	return 0;
++}
++
++
++static long madvise_hot_runtime(struct vm_area_struct *vma,
++								 struct vm_area_struct **prev,
++								 unsigned long start_addr,
++								 unsigned long end_addr) 
++{
++	struct mm_struct *mm = vma->vm_mm;
++	struct mmu_gather tlb;
++		
++	printk("jiacheng madvise_hot_runtime() start_addr= %lu end_addr= %lu ", start_addr, end_addr);
++	*prev = vma;
++	if (!can_madv_lru_vma(vma)) {
++		return -EINVAL;
++	}
++	lru_add_drain();  /* Push any new pages onto the LRU now */
++	tlb_gather_mmu(&tlb, mm, start_addr, end_addr);
++	madvise_hot_page_range(&tlb, vma, start_addr, end_addr);
++	tlb_finish_mmu(&tlb, start_addr, end_addr);
++
++	return 0;
++}
++
++
++__attribute__((unused)) 
++static long madvise_cold_runtime_old(struct vm_area_struct *vma,
++			     struct vm_area_struct **prev,
++			     unsigned long start, unsigned long end)
++{
++	*prev = vma;
++	if (vma->vm_flags & (VM_LOCKED|VM_HUGETLB|VM_PFNMAP))
++		return -EINVAL;
++
++	jiacheng_page_range_cold(vma, start, end - start);
++	return 0;
++}
++// jiacheng end
++
++
++
+ static int madvise_free_pte_range(pmd_t *pmd, unsigned long addr,
+ 				unsigned long end, struct mm_walk *walk)
+ 
+@@ -488,19 +877,7 @@ static long madvise_dontneed(struct vm_area_struct *vma,
+ 	return 0;
+ }
+ 
+-// jiacheng start
+-static long madvise_cold(struct vm_area_struct *vma,
+-			     struct vm_area_struct **prev,
+-			     unsigned long start, unsigned long end)
+-{
+-	*prev = vma;
+-	if (vma->vm_flags & (VM_LOCKED|VM_HUGETLB|VM_PFNMAP))
+-		return -EINVAL;
+ 
+-	jiacheng_page_range_cold(vma, start, end - start);
+-	return 0;
+-}
+-// jiacheng end
+ 
+ /*
+  * Application wants to free up the pages and associated backing store.
+@@ -613,8 +990,11 @@ madvise_vma(struct vm_area_struct *vma, struct vm_area_struct **prev,
+ 	case MADV_DONTNEED:
+ 		return madvise_dontneed(vma, prev, start, end);
+ 	// jiacheng start
+-	case MADV_COLD:
+-		return madvise_cold(vma, prev, start, end);
++	case MADV_RUNTIME_COLD:
++		return madvise_pageout(vma, prev, start, end);
++		// return madvise_cold_runtime(vma, prev, start, end);
++	case MADV_RUNTIME_HOT:
++		return madvise_hot_runtime(vma, prev, start, end);
+ 	// jiacheng end
+ 	default:
+ 		return madvise_behavior(vma, prev, start, end, behavior);
+@@ -635,7 +1015,8 @@ madvise_behavior_valid(int behavior)
+ 	case MADV_DONTNEED:
+ 	case MADV_FREE:
+ 	// jiacheng start
+-	case MADV_COLD:
++	case MADV_RUNTIME_COLD:
++	case MADV_RUNTIME_HOT:
+ 	// jiacheng end
+ #ifdef CONFIG_KSM
+ 	case MADV_MERGEABLE:
+@@ -761,6 +1142,7 @@ SYSCALL_DEFINE3(madvise, unsigned long, start, size_t, len_in, int, behavior)
+ 		prev = vma;
+ 
+ 	blk_start_plug(&plug);
++
+ 	for (;;) {
+ 		/* Still start < end. */
+ 		error = -ENOMEM;
+diff --git a/mm/memory.c b/mm/memory.c
+index f4a748b94916..32b954bec944 100644
+--- a/mm/memory.c
++++ b/mm/memory.c
+@@ -3611,10 +3611,6 @@ static int __handle_mm_fault(struct vm_area_struct *vma, unsigned long address,
+ 	pgd_t *pgd;
+ 	pud_t *pud;
+ 
+-	// jiacheng start
+-	// printk("jiacheng memory.c 3606 address= %lX, flags= %d, pid= %d, tgid= %d\n", address, flags, current->pid, current->tgid);
+-	// jiacheng end
+-
+ 	pgd = pgd_offset(mm, address);
+ 	pud = pud_alloc(mm, pgd, address);
+ 	if (!pud)
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index 4ad3c745d6e9..9e460ec997b6 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -3869,8 +3869,6 @@ __alloc_pages_slowpath(gfp_t gfp_mask, unsigned int order,
+ 	if (read_mems_allowed_retry(cpuset_mems_cookie))
+ 		goto retry_cpuset;
+ 
+-	// jiacheng start
+-	// jiacheng end
+ 	/* Reclaim has failed us, start killing things */
+ 	page = __alloc_pages_may_oom(gfp_mask, order, ac, &did_some_progress);
+ 	if (page)
+diff --git a/mm/page_io.c b/mm/page_io.c
+index f3f3ce7eb3d5..8f7be485adf3 100644
+--- a/mm/page_io.c
++++ b/mm/page_io.c
+@@ -24,6 +24,11 @@
+ #include <linux/uio.h>
+ #include <asm/pgtable.h>
+ 
++// jiacheng start
++static atomic_t swapin_num;
++static atomic_t swapout_num;
++// jiacheng end
++
+ static struct bio *get_swap_bio(gfp_t gfp_flags,
+ 				struct page *page, bio_end_io_t end_io)
+ {
+@@ -236,9 +241,6 @@ int generic_swapfile_activate(struct swap_info_struct *sis,
+ int swap_writepage(struct page *page, struct writeback_control *wbc)
+ {
+ 	int ret = 0;
+-	// jiacheng start
+-	printk("jiacheng debug page_io.c 240 swap_writepage()");
+-	// jiacheng end
+ 	if (try_to_free_swap(page)) {
+ 		unlock_page(page);
+ 		goto out;
+@@ -288,7 +290,9 @@ int __swap_writepage(struct page *page, struct writeback_control *wbc,
+ 		if (ret == PAGE_SIZE) {
+ 			count_vm_event(PSWPOUT);
+ 			// jiacheng start
+-			printk("jiacheng debug count_vm_event()");
++			atomic_inc(&swapout_num);
++			printk("jiacheng page_io.c 294 SWAPOUT pfn= %lu swapout_num= %d swapin_num= %d", 
++					page_to_pfn(page), atomic_read(&swapout_num), atomic_read(&swapin_num));
+ 			// jiacheng end
+ 			ret = 0;
+ 		} else {
+@@ -315,7 +319,9 @@ int __swap_writepage(struct page *page, struct writeback_control *wbc,
+ 	if (!ret) {
+ 		count_vm_event(PSWPOUT);
+ 		// jiacheng start
+-		printk("jiacheng debug count_vm_event()");
++		atomic_inc(&swapout_num);
++		printk("jiacheng page_io.c 323 SWAPOUT pfn= %lu swapout_num= %d swapin_num= %d", 
++				page_to_pfn(page), atomic_read(&swapout_num), atomic_read(&swapin_num));
+ 		// jiacheng end
+ 		return 0;
+ 	}
+@@ -334,7 +340,9 @@ int __swap_writepage(struct page *page, struct writeback_control *wbc,
+ 		bio_set_op_attrs(bio, REQ_OP_WRITE, 0);
+ 	count_vm_event(PSWPOUT);
+ 	// jiacheng start
+-	printk("jiacheng debug count_vm_event()");
++	atomic_inc(&swapout_num);
++	printk("jiacheng page_io.c 344 SWAPOUT pfn= %lu swapout_num= %d swapin_num= %d", 
++			page_to_pfn(page), atomic_read(&swapout_num), atomic_read(&swapin_num));
+ 	// jiacheng end
+ 	set_page_writeback(page);
+ 	unlock_page(page);
+@@ -349,9 +357,6 @@ int swap_readpage(struct page *page)
+ 	int ret = 0;
+ 	struct swap_info_struct *sis = page_swap_info(page);
+ 
+-	// jiacheng start
+-	printk("jiacheng debug page_io.c 344 swap_readpage()");
+-	// jiacheng end
+ 	VM_BUG_ON_PAGE(!PageSwapCache(page), page);
+ 	VM_BUG_ON_PAGE(!PageLocked(page), page);
+ 	VM_BUG_ON_PAGE(PageUptodate(page), page);
+@@ -366,8 +371,17 @@ int swap_readpage(struct page *page)
+ 		struct address_space *mapping = swap_file->f_mapping;
+ 
+ 		ret = mapping->a_ops->readpage(swap_file, page);
+-		if (!ret)
++		// jiacheng start
++		// if (!ret)
++		// 	count_vm_event(PSWPIN);
++		if (!ret) {
+ 			count_vm_event(PSWPIN);
++			atomic_inc(&swapin_num);
++			printk("jiacheng page_io.c 380 SWAP_IN pfn= %lu swapout_num= %d swapin_num= %d", 
++					page_to_pfn(page), atomic_read(&swapout_num), atomic_read(&swapin_num));
++		}
++			
++		// jiacheng end
+ 		return ret;
+ 	}
+ 
+@@ -379,6 +393,11 @@ int swap_readpage(struct page *page)
+ 		}
+ 
+ 		count_vm_event(PSWPIN);
++		// jiacheng start
++		atomic_inc(&swapin_num);
++		printk("jiacheng page_io.c 398 SWAP_IN pfn= %lu swapout_num= %d swapin_num= %d", 
++				page_to_pfn(page), atomic_read(&swapout_num), atomic_read(&swapin_num));
++		// jiacheng end
+ 		return 0;
+ 	}
+ 
+@@ -391,6 +410,11 @@ int swap_readpage(struct page *page)
+ 	}
+ 	bio_set_op_attrs(bio, REQ_OP_READ, 0);
+ 	count_vm_event(PSWPIN);
++	// jiacheng start
++	atomic_inc(&swapin_num);
++	printk("jiacheng page_io.c 412 SWAP_IN pfn= %lu swapout_num= %d swapin_num= %d", 
++			page_to_pfn(page), atomic_read(&swapout_num), atomic_read(&swapin_num));
++	// jiacheng end
+ 	submit_bio(bio);
+ out:
+ 	return ret;
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index ad3fb01a8194..90d17d6bbeca 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -56,6 +56,7 @@
+ #include <linux/balloon_compaction.h>
+ 
+ // jiacheng start
++// #include <linux/sched/mm.h>
+ #include "jiachenghack_mm.h"
+ // jiacheng end
+ 
+@@ -1724,6 +1725,7 @@ unsigned long reclaim_clean_pages_from_list(struct zone *zone,
+ 	return ret;
+ }
+ 
++
+ #ifdef CONFIG_PROCESS_RECLAIM
+ unsigned long reclaim_pages(struct list_head *page_list)
+ {
+@@ -1775,6 +1777,7 @@ unsigned long reclaim_pages(struct list_head *page_list)
+ }
+ #endif
+ 
++
+ /*
+  * Attempt to remove the specified page from its LRU.  Only take this page
+  * if it is of the appropriate PageActive status.  Pages which are being
+-- 
+2.34.1
+
